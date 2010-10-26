@@ -6,6 +6,7 @@ trait Addable[A, +Repr <: Addable[A, Repr]] { self: Repr =>
 
 trait StLk[A, +This <: StLk[A, This] with St[A]] extends ItrblLk[A, This] with Addable[A, This] { self: This =>
   def empty: This
+  override protected[this] def newBuilder: Bldr[A, This] = new AddBldr[A, This](empty.asInstanceOf[This]) // @TODO: why cast??? bug?
   def contains(elem: A): Boolean
   def + (elem: A): This
   def - (elem: A): This
@@ -21,7 +22,6 @@ class AddBldr[Elem, To <: Addable[Elem, To] with Itrbl[Elem] with ItrblLk[Elem, 
 
 abstract class StFct[CC[X] <: St[X] with StLk[X, CC[X]]] extends GenCpn[CC] {
   def newBuilder[A]: Bldr[A, CC[A]] = new AddBldr[A, CC[A]](empty[A])
-
   def setCanBuildFrom[A] = new CBF[CC[_], A, CC[A]] {
     def apply(from: CC[_]) = newBuilder[A]
   }

@@ -19,7 +19,7 @@ abstract class BtSt extends St[Int] with BtStLk[BtSt] {
 
 object BtSt extends BtStFct[BtSt] {
   val empty = new BtStImpl()
-  def newBuilder = new AddBldr[Int, BtSt](empty)
+  def newBuilder: Bldr[Int, BtSt] = new AddBldr[Int, BtSt](empty)
   implicit def canBuildFrom: CBF[BtSt, Int, BtSt] = bitsetCanBuildFrom
 }
 

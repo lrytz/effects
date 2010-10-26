@@ -15,6 +15,28 @@ object CollsTest {
     s += "lsdkf"
     s = s map (x => x + "0-00")
     for (i <- s) print(i +", ")
+    println()
+
+    for (i <- s filter (x => x contains "j")) print(i +", ")
+    println()
+
+    var bs: BtSt = new BtStImpl()
+    bs += 1
+    bs += 2
+    bs = bs map (x => x + 1)
+    for (i <- bs) print(i +", ")
+    println()
+
+    for (i <- bs filter (x => x > 2)) print(i +", ")
+    println()
+
+    //bs = bs map (x => ":"+ x)
+    val bss: St[String] = bs map (x => ":"+ x)
+    for (i <- bss) print(i + ", ")
+    println()
+
+    for (i <- bss filter (x => x contains "2")) print(i +", ")
+    println()
   }
 }
 
@@ -67,13 +89,11 @@ trait TravLk[+A, +Repr] { self: Repr =>
   }
 
   def map[B, That](f: A => B)(implicit bf: CBF[Repr, B, That]): That = {
-    val b = bf(self)
+    val b = bf(self) // @TODO: submit intellij bug
     for (x <- this) b += f(x)
     b.result
   }
 }
-
-import annotation.unchecked.uncheckedVariance
 
 trait GenTravTmpl[+A, +CC[X] <: Trav[X]] {
   def foreach[U](f: A => U): Unit
