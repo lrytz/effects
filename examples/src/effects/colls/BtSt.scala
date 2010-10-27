@@ -4,7 +4,6 @@ trait BtStLk[+This <: BtStLk[This] with St[Int]] extends StLk[Int, This] { self:
   def empty: This
 }
 
-
 trait BtStFct[Coll <: BtSt with BtStLk[Coll]] {
   def empty: Coll
   def newBuilder: Bldr[Int, Coll]
@@ -23,8 +22,9 @@ object BtSt extends BtStFct[BtSt] {
   implicit def canBuildFrom: CBF[BtSt, Int, BtSt] = bitsetCanBuildFrom
 }
 
+
+
 class BtStImpl(private val els: collection.immutable.Set[Int] = new collection.immutable.HashSet[Int]()) extends BtSt { self =>
-  def size = els.size
   def contains(elem: Int): Boolean = els(elem)
   def + (elem: Int): BtSt = new BtStImpl(self.els + elem)
   def - (elem: Int): BtSt = new BtStImpl(self.els - elem)

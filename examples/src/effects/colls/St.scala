@@ -4,6 +4,15 @@ trait Addable[A, +Repr <: Addable[A, Repr]] { self: Repr =>
   def +(elem: A): Repr
 }
 
+class AddBldr[Elem, To <: Addable[Elem, To] with Itrbl[Elem] with ItrblLk[Elem, To]](empty: To) extends Bldr[Elem, To] {
+  protected var elems: To = empty
+  def +=(x: Elem): this.type = { elems = elems + x; this }
+  def clear() { elems = empty }
+  def result: To = elems
+}
+
+
+
 trait StLk[A, +This <: StLk[A, This] with St[A]] extends ItrblLk[A, This] with Addable[A, This] { self: This =>
   def empty: This
   override protected[this] def newBuilder: Bldr[A, This] = new AddBldr[A, This](empty)
@@ -11,13 +20,6 @@ trait StLk[A, +This <: StLk[A, This] with St[A]] extends ItrblLk[A, This] with A
   def + (elem: A): This
   def - (elem: A): This
   def apply(elem: A): Boolean = contains(elem)
-}
-
-class AddBldr[Elem, To <: Addable[Elem, To] with Itrbl[Elem] with ItrblLk[Elem, To]](empty: To) extends Bldr[Elem, To] {
-  protected var elems: To = empty
-  def +=(x: Elem): this.type = { elems = elems + x; this }
-  def clear() { elems = empty }
-  def result: To = elems
 }
 
 abstract class StFct[CC[X] <: St[X] with StLk[X, CC[X]]] extends GenCpn[CC] {
@@ -37,6 +39,7 @@ object St extends StFct[St] {
 }
 
 
+
 class HSt[A](private val els: collection.immutable.Set[A] = new collection.immutable.HashSet[A]()) extends St[A] with GenTravTmpl[A, HSt] with StLk[A, HSt[A]] { self =>
   override def companion: GenCpn[HSt] = HSt
 
@@ -54,8 +57,6 @@ class HSt[A](private val els: collection.immutable.Set[A] = new collection.immut
    * expects a This, but gets a Set[A].
    */
   def empty: HSt[A] = companion.empty[A]
-
-  def size = els.size
   def contains(elem: A): Boolean = els(elem)
   def + (elem: A): HSt[A] = new HSt[A](self.els + elem)
   def - (elem: A): HSt[A] = new HSt[A](self.els - elem)
@@ -64,7 +65,6 @@ class HSt[A](private val els: collection.immutable.Set[A] = new collection.immut
     def hasNext: Boolean = it.hasNext
     def next(): A = it.next()
   }
-  override def foreach[U](f: A =>  U): Unit = els.foreach[U](f)
 }
 
 object HSt extends StFct[HSt] {

@@ -1,51 +1,10 @@
 package effects.colls
 
 
-
-object CollsTest {
-  def main(args: Array[String]) {
-    val l: Lst[Int] = Lst(1,2,3)
-    val m: Lst[Int] = l filter (x => x > 1)
-    println(m)
-
-    println(l map (x => x + 1))
-
-    var s = new HSt[String]()
-    s += "ldskjf"
-    s += "lsdkf"
-    s = s map (x => x + "0-00")
-    for (i <- s) print(i +", ")
-    println()
-
-    for (i <- s filter (x => x contains "j")) print(i +", ")
-    println()
-
-    var bs: BtSt = new BtStImpl()
-    bs += 1
-    bs += 2
-    bs = bs map (x => x + 1)
-    for (i <- bs) print(i +", ")
-    println()
-
-    for (i <- bs filter (x => x > 2)) print(i +", ")
-    println()
-
-    //bs = bs map (x => ":"+ x)
-    val bss: St[String] = bs map (x => ":"+ x)
-    for (i <- bss) print(i + ", ")
-    println()
-
-    for (i <- bss filter (x => x contains "2")) print(i +", ")
-    println()
-  }
-}
-
-
 trait Bldr[-Elem, +To] {
   def +=(elem: Elem): this.type
   def result(): To
 }
-
 
 trait CBF[-From, -Elem, +To] {
   def apply(from: From): Bldr[Elem, To]
@@ -76,6 +35,14 @@ trait TravLk[+A, +Repr] { self: Repr =>
     b.result
   }
 
+  def head: A = {
+    var result: Option[A] = None
+    for (x <- this) {
+      if (result.isEmpty) result = Some(x)
+    }
+    result.getOrElse(throw new NoSuchElementException)
+  }
+
   def tail: Repr = {
     if (isEmpty) throw new UnsupportedOperationException("empty.tail")
     drop(1)
@@ -89,16 +56,15 @@ trait TravLk[+A, +Repr] { self: Repr =>
   }
 
   def map[B, That](f: A => B)(implicit bf: CBF[Repr, B, That]): That = {
-    val b = bf(self) // @TODO: submit intellij bug
+    val b = bf(self.asInstanceOf[Repr]) // @TODO: cast due to intellij bug (youtrack.jetbrains.net/issue/SCL-2480)
     for (x <- this) b += f(x)
     b.result
   }
 }
 
+
+
 trait GenTravTmpl[+A, +CC[X] <: Trav[X]] {
-  def foreach[U](f: A => U): Unit
-  def head: A
-  def isEmpty: Boolean
   def companion: GenCpn[CC]
   protected[this] def newBuilder: Bldr[A, CC[A]] = companion.newBuilder[A]
   def genericBuilder[B]: Bldr[B, CC[B]] = companion.newBuilder[B]
@@ -106,7 +72,6 @@ trait GenTravTmpl[+A, +CC[X] <: Trav[X]] {
 
 abstract class GenCpn[+CC[X] <: Trav[X]] {
   type Coll = CC[_]
-
   def newBuilder[A]: Bldr[A, CC[A]]
   def empty[A]: CC[A] = newBuilder[A].result
 }
@@ -115,12 +80,12 @@ abstract class TravFct[CC[X] <: Trav[X] with GenTravTmpl[X, CC]] extends GenCpn[
   class GCBF[A] extends CBF[CC[_], A, CC[A]] {
     def apply(from: Coll) = from.genericBuilder[A]
   }
-  // fill, tabulate, range, iterate, ...
 }
 
 
+
 trait Trav[+A] extends TravLk[A, Trav[A]] with GenTravTmpl[A, Trav] {
-  override def companion: GenCpn[Trav] = Trav
+  def companion: GenCpn[Trav] = Trav
 }
 
 object Trav extends TravFct[Trav] {
@@ -129,19 +94,15 @@ object Trav extends TravFct[Trav] {
   def newBuilder[A]: Bldr[A, Trav[A]] = new LstBldr
 }
 
-trait TravOnc[+A] {
-  def foreach[U](f: A => U): Unit
-  def isEmpty: Boolean
-}
 
 
-
-trait Itor[+A] extends TravOnc[A] {
+trait Itor[+A] {
   def hasNext: Boolean
   def next(): A
   def isEmpty: Boolean = !hasNext
   def foreach[U](f: A =>  U) { while (hasNext) f(next()) }
 }
+
 object Itor {
   val empty = new Itor[Nothing] {
     def hasNext: Boolean = false
@@ -155,11 +116,6 @@ trait ItrblLk[+A, +Repr] extends TravLk[A, Repr] { self: Repr =>
   def iterator: Itor[A]
   def foreach[U](f: A => U): Unit =
     iterator.foreach(f)
-
-  def head: A =
-      if (isEmpty) throw new NoSuchElementException
-      else iterator.next
-
 }
 
 trait Itrbl[+A] extends Trav[A] with GenTravTmpl[A, Itrbl] with ItrblLk[A, Itrbl[A]] {
@@ -168,8 +124,6 @@ trait Itrbl[+A] extends Trav[A] with GenTravTmpl[A, Itrbl] with ItrblLk[A, Itrbl
 object Itrbl extends TravFct[Itrbl] {
   def newBuilder[A]: Bldr[A, Itrbl[A]] = new LstBldr
 }
-
-
 
 
 
@@ -185,7 +139,10 @@ trait SqLk[+A, +Repr <: SqLk[A, Repr]] extends ItrblLk[A, Repr] { self: Repr =>
         val result = these.head; these = these.tail; result
       } else Itor.empty.next
   }
+}
 
+abstract class SqFct[CC[X] <: Sq[X] with GenTravTmpl[X, CC]] extends TravFct[CC] {
+  // adds "unapplySeq" in real; otherwise not needed, could use TravFct
 }
 
 trait Sq[+A] extends Itrbl[A] with GenTravTmpl[A, Sq] with SqLk[A, Sq[A]] {
@@ -197,21 +154,10 @@ object Sq extends SqFct[Sq] {
 }
 
 
-abstract class SqFct[CC[X] <: Sq[X] with GenTravTmpl[X, CC]] extends TravFct[CC] {
-  // adds "unapplySeq" in real; otherwise not needed, could use TravFct
-}
-
-
-
 
 sealed abstract class Lst[+A] extends Sq[A] with GenTravTmpl[A, Lst] with SqLk[A, Lst[A]] {
-  def isEmpty: Boolean
-  def head: A
-  def tail: Lst[A]
   def apply(idx: Int): A = if (idx == 0) head else tail(idx - 1)
   def length = if (isEmpty) 0 else 1+tail.length
-
-
   override def companion: GenCpn[Lst] = Lst
 }
 
@@ -221,16 +167,12 @@ final case class cns[A](override val head: A, override val tail: Lst[A]) extends
 
 case object nl extends Lst[Nothing] {
   override def isEmpty = true
-  override def head = throw new Error()
-  override def tail = throw new Error()
 }
 
 class LstBldr[A] extends Bldr[A, Lst[A]] {
   val b = new collection.mutable.ListBuffer[A]()
   def +=(a: A) = { b += a; this }
-  def result: Lst[A] = {
-    b.foldRight(nl: Lst[A])((a, res) => cns(a, res))
-  }
+  def result: Lst[A] = Lst(b: _*)
 }
 
 object Lst extends SqFct[Lst] {
