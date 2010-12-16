@@ -15,9 +15,9 @@ trait CBF[-From, -Elem, +To] {
 trait TravLk[+A, +Repr] { self: Repr =>
   protected[this] def newBuilder: Bldr[A, Repr]
 
-  def foreach[U](f: A => U): Unit
+  def foreach[U](f: A => U): Unit /*@pc(f.apply(a)) forSome {val a: A}*/
 
-  def isEmpty: Boolean = {
+  def isEmpty: Boolean /*@throws[Nothing] @pc(this.foreach(f)) forSome {val f: A => Unit @throws[Nothing]}*/ = {
     var result = true
     for (x <- this) {
       result = false
@@ -48,7 +48,7 @@ trait TravLk[+A, +Repr] { self: Repr =>
     drop(1)
   }
 
-  def filter(p: A => Boolean): Repr = {
+  def filter(p: A => Boolean): Repr /*@pcs(this.newBuilder, this.foreach(%))*/ = {
     val b = newBuilder
     for (x <- this)
       if (p(x)) b += x
