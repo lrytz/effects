@@ -1,4 +1,5 @@
-package effects.colls
+package effects
+package colls
 
 
 trait Bldr[-Elem, +To] {
@@ -157,7 +158,7 @@ object Sq extends SqFct[Sq] {
 
 sealed abstract class Lst[+A] extends Sq[A] with GenTravTmpl[A, Lst] with SqLk[A, Lst[A]] {
   def apply(idx: Int): A = if (idx == 0) head else tail(idx - 1)
-  def length = if (isEmpty) 0 else 1+tail.length
+  def length: Int = if (isEmpty) 0 else 1+tail.length // @TODO: return type due to intellij bug
   override def companion: GenCpn[Lst] = Lst
 }
 
