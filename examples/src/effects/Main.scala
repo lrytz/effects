@@ -290,7 +290,7 @@ object Main {
   class polyEff3(e: Effect) extends Effect
   class polyEff3App(e: Effect, arg: Any) extends Effect
 
-  def applyFst3(a: A, fs: List[A => String @polyEff3(eff)])(implicit eff: Effect): String @polyEff3App(eff, %: A) = fs match {
+  def applyFst3(a: A, fs: List[A => String @polyEff3(eff)])(implicit eff: Effect): String @polyEff3App(eff, % : A) = fs match {
     case f :: _ => f(a)
     case _ => ""
   }
