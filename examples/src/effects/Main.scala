@@ -2,7 +2,7 @@ package effects
 
 
 // effect annotations
-trait Effect extends TypeConstraint
+trait Effect extends annotation.TypeConstraint
 
 // masking only on effect params and param calls!
 // class mask(effects: Effect*) extends TypeConstraint
@@ -13,6 +13,8 @@ case class ep(name: Symbol /*, bounds: Effect* */) extends Effect
 // but otherwise, effects have to be TypeConstraints, this will make the applyFirst example work.
 case class pc(call: Any, mask: Seq[Effect] = Nil, propagate: Seq[Effect] = Nil) extends Effect
 case class pcs(calls: Any*) extends Effect
+
+case class masked(eff: Effect, mask: Seq[Effect]) extends Effect
 
 // this means pure for all domains. pure inside domains can
 // be done individually (e.g. @throws[Nothing] for exceptions)
@@ -69,24 +71,14 @@ object Main {
 
 
 
-  // polymorphism, dependencies
-
-  def app(a: A, f: A => String): String @pc(f.apply(a)) = f(a)
-
-  app(new A1, ((a: A) => a.f.g): (A => String) { def apply(a: A): String @pc(a.f.g) }): @throws[E1]
-
-  // or:    app(new A1, a => (a.f.g: String @pc(a.f.g))): @throws[E1]
-
-  // later: app(new A1, (a => a.f.g): (a: A => String @pc(a.f.g))): @throws[E1]
-
-
-
-
 
   // functional values
 
   val f: (B => String) { def apply(b: B): String @pc(b.g) } = (b: B) => b.g
   // val f: (b: B) => String @pc(b.g) = (b: B) => b.g
+
+
+  // @TODO: different notations for functions types with effect: refinement, annot on return type
 
 
 
@@ -148,45 +140,92 @@ object Main {
 
 
 
-  // transitive closure
+  // arguments in param calls
 
-  class C0 { def baz: String @throws[E1] = "" }
-  class C1 { def bar(c: C0): String @pc(c.baz) = c.baz }
-  def trans(c: C1): String @pc(c.bar(% : C0)) = c.bar(new C0)
+  class Args1 {
+    def f(x: Int): Int @throws[E1 | E2] = x + 1
+  }
 
-  trans(new C1): @throws[E1]
+  class Args2 extends Args1 {
+    override def f(x: Int): Int @throws[E1] = x + 2
+  }
+
+  // using an existential type
+  def pcArgs1(a: Args1): Int @pc(a.f(x)) forSome {val x: Int} = a.f(10)
+
+  // using an anonymous function
+  def pcArgs2(a: Args1): Int @pc((x: Int) => a.f(x)) = a.f(10)
+
+  // using the placeholder syntax for anonymous functions
+  def pcArgs3(a: Args1): Int @pc(a.f(_: Int)) = a.f(10)
+
+  // using a special value "%"
+  def pcArgs4(a: Args1): Int @pc(a.f(%)) = a.f(10)
+
+  // partially applied function
+  def pcArgs5(a: Args1): Int @pc(a.f _) = a.f(10)
+
+  pcArgs1(new Args2): @throws[E1]
 
 
 
-  // pc with arguments (%, other parameters), overloading
+
+  // param-call arguments refering to arguments of the method
+
+  def app(a: A, f: A => String): String @pc(f.apply(a)) = f(a)
+
+  app(new A1, ((a: A) => a.f.g): (A => String) { def apply(a: A): String @pc(a.f.g) }): @throws[E1]
+
+  // or:    app(new A1, a => (a.f.g: String @pc(a.f.g))): @throws[E1]
+
+  // later: app(new A1, (a => a.f.g): (a: A => String @pc(a.f.g))): @throws[E1]
+
+
+
+
+  // pc with overloaded method
 
   class Ovrl {
     def foo(a: Object, b: String): String @throws[E1] = ""
     def foo(a: String, b: String): String @throws[E2] = a + b
   }
 
-  /**
-   * o.foo(%, %) is allowed, it will select (String, String) since both are applicable
-   *
-   * to test things, use the object
-   *   object t {
-   *     def foo(a: => Object, b: Object) = 1
-   *     def foo(a: => String, b: String) = 2
-   *   }
-   *
-   * then call
-   *   t.foo(%, "")           => 2
-   *   t.foo(% : Object, "")  => 1
-   */
 
-  def ovr(o: Ovrl): String @pc(o.foo(% : Object, % : String)) = {
-    o.foo("fla", "flu")
-  }
+  def ovr1(o: Ovrl): String @pc(o.foo(a, b)) forSome {val a: String; val b: String} =
+    o.foo("far", "bar")
 
-  // see
-  app(new A1, a => a.f.g)
-  // for an example where the arguments of a @pc call can refer to params of
-  // the method
+  // selects the more specific (String, String)
+  def ovr2(o: Ovrl): String @pc(o.foo _) = o.foo("far", "bar")
+
+  def ovr3(o: Ovrl): String @pc(o.foo(_: Object, _: String)) =
+    o.foo(new Object, "dlkfj")
+
+  //o.foo(%, %) would work (both are applicable) and select (String, String)
+  def ovr4(o: Ovrl): String @pc(o.foo(% : Object, % : String)) =
+    o.foo(new Object, "flu")
+
+
+
+
+
+  // transitive closure: pc-effect of "trans" is a pc-effect of "bar",
+  // which is the actual effect
+
+  class C0a { def baz: String @throws[E1 | E2] = "" }
+  class C0b extends C0a { override def baz: String @throws[E1] = "beeeh" }
+
+  class C1a { def bar(c: C0a): String @pc(c.baz) = c.baz }
+  class C1b extends C1a { override def bar(c: C0a): String = "me pure" }
+
+  def trans(c: C1a): String @pc(c.bar(c0)) forSome {val c0: C0b} = c.bar(new C0b)
+
+  // we use the information that "bar" is called, so the following can be pure:
+  trans(new C1b): @pure
+
+  // we use the information that "bar" is called with argument of C0b:
+  trans(new C1a): @throws[E1]
+
+
 
 
 
@@ -197,99 +236,6 @@ object Main {
     case x :: xs => f(x) :: map(xs, f)
     case Nil => Nil
   }
-
-
-
-
-
-
-  def mapExt[A, B](l: List[A], f: A => B): List[B] @pc(f.apply(x)) forSome {val x: A} = l match {
-    case x :: xs => f.apply(x) :: map(xs, f)
-    case Nil => Nil
-  }
-
-
-
-  mapExt(List(1,2,3), (x => {
-    if(math.random < 0.5) throw new E1
-    else x + 1
-  }):  (Int => Int @throws[E1])): @throws[E1]
-
-
-
-/*
-  // map of the collection library, with builders.
-
-  trait TravLike[+A, +Repr] {
-
-    def repr: Repr @pure = this.asInstanceOf[Repr]
-
-    // @TODO: maybe we want to allow arbitrary effects, and then the subclasses can be
-    // more specific (i.e. List)?
-    def foreach[U](f: A => U): Unit @pc(f.apply(a)) forSome {val a: A}
-
-    def map[B, That](f: A => B)(implicit bf: CBF[Repr, B, That]): That @pcs(this.foreach(f), f.apply(a), bf.apply(r)) forSome {val a: A; val r: Repr} = {
-      val b = bf(repr) // @pc(bf.apply)
-      b.sizeHint(this) // @pure
-      // for (x <- this) b += f(x)
-      this.foreach(x => b += f(x)) // @pc(f.apply)
-      b.result // @pure
-    }
-  }
-  trait CBF[-From, -Elem, +To] {
-    def apply(from: From): Bldr[Elem, To] // allow any effect, concrete builder factories will be pure
-    def apply(): Bldr[Elem, To]           // same here
-  }
-
-  trait Bldr[-Elem, +To] extends Grwbl[Elem] {
-    def +=(elem: Elem): this.type  // allow any effect, concrete builders will be pure
-    def sizeHint(coll: TravLike[_, _], delta: Int = 0): Unit @pure = {
-      ()
-    }
-    def result(): To // @pure
-  }
-  trait Grwbl[-A] { }
-
-  // need some concrete implementation, e.g. List, to see the real thing.
-
-
-  trait LinSqOpt[+A, +Repr <: LinSqOpt[A, Repr]] extends TravLike[A, Repr] {
-    def isEmpty: Boolean
-    def hd: A
-    def tl: Repr
-
-    override def foreach[B](f: A => B) {
-      var these = this
-      while (!these.isEmpty) {
-        f(these.hd)
-        these = these.tl
-      }
-    }
-  }
-
-  abstract class Lst[+A] extends LinSqOpt[A, Lst[A]] {
-    def Cns[B >: A] (x: B): Lst[B] =
-      new Cns(x, this)
-  }
-  case class Cns[B](hd: B, tl: Lst[B]) extends Lst[B] {
-    def isEmpty = false
-  }
-  case object Nl extends Lst[Nothing] {
-    def hd = throw new Error()
-    def tl = throw new Error()
-    def isEmpty = true
-  }
-
-
-
-
-
-
-
-  val c = Cns(1, Nl)
-  c.map(x => x + 1)
-*/
-
 
 
   // works because the parameter "f" is forwareded directly to map, which has a @pc on its corresponding parameter!!!
@@ -307,65 +253,152 @@ object Main {
 //  dep _
 
 
+
+
+
+
+
+
+  // explicit effect parameters for polymorphism when ParamCall doesn't help. using an additional type param.
+  // the @polyEff annotation *always* goes to a method's return type (in a refinement). sugar for functions.
+
+  class polyEff1[e <: Effect] extends Effect
+
+  def applyFst1[e <: Effect](a: A, fs: List[A => String @polyEff1[e]]): String @polyEff1[e] = fs match {
+    case f :: _ => f(a)
+    case _ => ""
+  }
+
+
+
+  // using implicits, inserted by the compiler. (no error here due to a bug: dependent type not detected)
+
+  class polyEff2(e: Effect) extends Effect
+
+  def applyFst2(a: A, fs: List[A => String @polyEff2(eff)])(implicit eff: Effect): String @polyEff2(eff) = fs match {
+    case f :: _ => f(a)
+    case _ => ""
+  }
+
+  applyFst2(new A, List(a => { throw new E1; "dlskfj" }))(throws[E1])
+
+
+
+  // problem in these two: can't talk about the type of the argument that was used. something
+  // like this, but here we'd need to make sure not to use the same effect param twice!
+
+  class polyEff3(e: Effect) extends Effect
+  class polyEff3App(e: Effect, arg: Any) extends Effect
+
+  def applyFst3(a: A, fs: List[A => String @polyEff3(eff)])(implicit eff: Effect): String @polyEff3App(eff, %: A) = fs match {
+    case f :: _ => f(a)
+    case _ => ""
+  }
+
+
   /**
-   * Effect Parameters and Bounds
+   * Another idea: give value names on type parameters.
+   *
+   * trait List[(i: +A)] {
+   *   def hd: (i: A)
+   *   def tl: List[(i: A)]
+   * }
+   * case class Cons[(i: +A)](hd: (i: A), tl: List[(i: A)] extends List[(i: A)]
+   * case object Nil extends List[(n: Nothing)] // (equivalent ot List[Nothing])
+   *
+   * def f(l: List[(f: A => B)]): B @pc(f.apply(_: A)) = l match {
+   *   case Cons(x, xs) => x(new A)    // type of x: (f: A)
+   *   case _ => new B
+   * }
+   *
+   *
+   * Names could maybe be done in annotation world (?)
+   *
+   */
+
+
+
+
+  // curried definitions
+
+  def applyFst3(fs: List[A => String @polyEff2(eff)])(gs: List[A => String @polyEff2(eff)])(implicit eff: Effect): String @polyEff2(eff) =
+    if (!fs.isEmpty && !gs.isEmpty) fs.head(new A) + gs.head(new A)
+    else ""
+
+  // this should proabbly not be allowed, the first param list should fix "eff" to be "throws[E1]"
+  applyFst3(List(a => {throw new E1; "foo"}))(List((a: A) => {throw new E2; "bar"}))(throws[E1 | E2])
+
+
+  // this should fix "eff" to "throws[E1]" and only allow that for the second
+  // argument (take in account variance! pure should be fine!)
+
+  // doesn't work because implicit value is not inserted, that has to be done by the compiler
+  // val apf3 = applyFst3(List(a => {throw new E1; "floo"})) _
+  // apf3(List(a => "blup"))
+
+
+  // not so nice:
+  def applyFst4(fs: List[A => String])(gs: List[A => String @polyEff2(eff)])(implicit eff: Effect): String @polyEff2(eff) =
+      if (!gs.isEmpty) gs.head(new A)
+      else ""
+
+  // BAD: compiler tries to insert the implicit... so effect has to be known
+  // val m = applyFst4(List()) _
+
+  // BUT: similar for type params:
+  // def f[A](x: Int)(y: A) = y
+  // f(1) _         // <<-- has type (Nothing) => Nothing
+
+
+
+
+
+
+  // more ad-hoc: using an @ep annotation. could still be encoded internally using the implicits
+
+  def applyFirst5(a: A, fs: List[A => String @ep('e)]): String @ep('e) = fs match {
+    case f :: _ => f(a)
+    case _ => ""
+  }
+  //@TODO: need param type (a: A) because of refinement
+  applyFirst5(new A1, List((a: A) => (a.f.g: @pc(a.f.g))): List[(A => String) {def apply(a: A): String @pc(a.f.g)}]): @throws[E1 | E2]
+
+
+
+
+  /**
+   * Upper bound on effect
    *
    *  - an effect on a method's return type (in a refinement) means a bound
    *
    *  - in general, they can only be attached to method return types using type refinements
-   *    => Allow short syntax for functions. A => B @ep('X) @throws[E1] means
+   *    => Allow short syntax for functions. A => B @throws[E1] means
+   *                  (A => B) { def apply(a: A): B @throws[E1] }
    *
-   *        (A => B) { def apply(a: A): B @ep('X) @throws[E1] }
-   *
-   *    which is equivalent to the following, if we support having bounds directly in the @ep
-   *        (A => B) { def apply(a: A): B @ep('X, throws[E1])
-   *
-   *  - effect parameters only have to be used when we want polymorphism over a type which is
-   *    not the type of an argument (but a part of it), see applyFirst
-   *
-   *  - lower bound could be useful in contravariant positions (right?). maybe ignore them for now.
-   *    if an effect system NEEDS some effect, it's like it NEEDS a capability, so things
-   *    can just be turned around in the system?
    *
    *
    *  - question of domains. does it limit the effect only in one domain? or require others pure?
    */
 
 
-  // @ep: polymorphic on inner type. can't encode dependency (argument to the apply method is a).
-
-  def applyFirst(a: A, fs: List[A => String @ep('e)]): String @ep('e) = fs match {
-    case f :: _ => f(a)
-    case _ => ""
-  }
-  //@TODO: need param type (a: A) because of refinement
-  applyFirst(new A1, List((a: A) => (a.f.g: @pc(a.f.g))): List[(A => String) {def apply(a: A): String @pc(a.f.g)}]): @throws[E1 | E2]
-
-  /**
-   * ADRIAAN: this could maybe be done (at least internally) using implicits, something similar
-   *   to bounds. currently we have
-   *     def foo[T](implicit w: Mani[T])
-   *  ==> the implicit is bounded by the type parameter.
-   *
-   *  Similiarly, the implicit below could be bounded by the concrete effect of the apply functions of fs.
-   */
-//  def applyFirst(a: A, fs: List[A => String @ep(w.eff)])(implicit w: Effect): String @ep(w.eff) = fs match {
-
-
 
   // bounds: examples with exceptions
 
-  def forall[A](l: List[A], p: A => Boolean @pure): Boolean @pure = l match {
-    case x :: xs => p(x) && forall(xs, p)
+  def pureForall[A](l: List[A], p: A => Boolean @pure): Boolean @pure = l match {
+    case x :: xs => p(x) && pureForall(xs, p)
     case Nil => true
   }
 
-  forall(List(1,2,3), (x: Int) => x < 10)
+  pureForall(List(1,2,3), (x: Int) => x < 10)
   // should be rejected
-  forall(List(1, 2, 3), (x: Int) => {
+  pureForall(List(1, 2, 3), (x: Int) => {
     if (x > 100) throw new E1
     else x < 10
   })
+
+
+
+
 
   def safeExec(b: B, f: B => String @throws[E1]): String @pure = {
     try {
@@ -383,13 +416,37 @@ object Main {
   safeExec(new B, b => b.g) // should be rejected
 
 
-  def boundExec(b: B, f: B => String @throws[E1]): String @pc(f.apply(%)) = {
+  def boundExec(b: B, f: B => String @throws[E1]): String @pc(f.apply(_: B)) = {
     f(b)
   }
 
   (boundExec(new B, b => { throw new E1 }): @throws[E1]) // OK
   (boundExec(new B, b => "dlkfj"): @pure) // OK
   boundExec(new B, b => { throw new E2 }) // reject
+
+
+
+
+  /**
+   * Bound in covariant position: ok, but doesn't really make sense. One could just
+   * as well have no bound, the result would be the same.
+   */
+
+  def lowB(f: (A => String @throws[E1]) => String): String @pc(f.apply(_: (A => String @pure))) =
+    f(a => "dlkfj")
+
+  /**
+   * "funk" takes an m: (A => String) with upper bound @throws[E1].
+   * It has effects @pc(m.apply) and @trhows[E2].
+   */
+  val funk = ((m: A => String @throws[E1]) => {
+    if (math.random < 0.4) throw new E2;
+    m(new A): @pc(m.apply(_: A))
+  }): ((A => String @throws[E1]) => String) {def apply(m: (A => String @throws[E1])): String @throws[E2] @pc(m.apply(_: A))}
+
+  // lowB has effect @pc(funk.apply(_: (A => String @pure))), i.e. only @throws[E2]
+  lowB(funk): @throws[E2]
+
 
 
 
@@ -422,6 +479,8 @@ object Main {
   boundApplyFirst(new B, List((b: B) => b.g)) // should be rejected
 
 
+
+
   /**
    *  EFFECT MASKING
    *
@@ -431,7 +490,7 @@ object Main {
    *
    *
    * Polymorphism over masking
-   *  - can an argument function mask something? Probably not, how should they? One needs to
+   *  - can an argument function mask something? Probably not, how should it? One needs to
    *    use the specific masking operation inside the body, calling an argument function does
    *    not mask effects
    *
@@ -455,15 +514,98 @@ object Main {
    */
 
 
+  class fooEff extends Effect
+  object fooEff extends Effect
 
-  // does not make any sense. we know the effect of foo and what is masked ==> we can as well
-  // write down the effect of safeFoo. it could make sense if we consider @pc(this.foo), but
-  // since "this" is an object, foo can never be overridden.
-  def safeFoo: Unit /* @mask(throws[E2]) */ = try {
+  def fooIntro(): Unit @fooEff = {
+    ()
+  }
+
+  def fooMask[T](body: => T): T @pc(body, mask = fooEff) = {
+    body
+  }
+
+
+  def fooFul(x: Int): Int @fooEff = {
+    fooIntro()
+    x + 10
+  }
+
+  (fooMask { fooFul(10) } + 2): @pure
+
+
+
+
+  // polymorphic masking
+
+  class FM1 {
+    def mask[T](body: => T): T @pc(body) = {
+      body
+    }
+  }
+
+  class FM2 extends FM1 {
+    // overriding: need to mask more
+    override def mask[T](body: => T): T @pc(body, mask = fooEff) = {
+      body
+    }
+  }
+
+  def polyMask(fm: FM1, x: Int): Int @pc(fm.mask(_: Int @fooEff /* in fact, (=> Int @fooEff) */)) = {
+    fm.mask {
+      fooFul(x)
+    }
+  }
+
+  polyMask(new FM2, 20): @pure
+
+
+
+
+
+  // every function can mask effects. example:
+
+  def incWithE(x: Int): Int @throws[E1] = {
+    if (math.random < 0.1) throw new E1
+    else x + 1
+  }
+
+  // pc cand do both: yield AND/OR mask an effect.
+
+  // the effect throws[E1] DOES happen! f's argument is not call-by-name, so
+  // incWithE(99) IS evaluated, which DOES have an effect.
+  def funMask[T](f: Int => T): T @throws[E1] @pc(f.apply(_: Int)) = {
+    f(incWithE(99))
+  }
+
+
+  // delay execution of f's argument (could also use by-name param)
+  def funMaskD[T](f: (() => Int) => T): T @pc(f.apply(_: (() => Int @throws[E1]))) = {
+    f(() => incWithE(99))
+  }
+
+  val arg: ((() => Int) => Int) { def apply(f: () => Int): Int @pc(f.apply(), mask = throws[E1]) } = (f: () => Int) => {
+    try { f() }
+    catch { case e: E1 => 2 }
+  }
+
+  funMaskD(arg): @pure
+
+
+
+
+  // no masking here, because there's no effect- or handler-polymorphism
+  def safeFoo: Unit = try {
     foo
   } catch {
     case e: E2 => ()
   }
+
+
+  // maks depends on handler.
+  def withHandler(h: PartialFunction[Throwable, Unit]): Unit @masked(throws[E2], caughtBy(h)) = try {
+    foo
+  } catch h
 
 
 
@@ -476,6 +618,11 @@ object Main {
 
   (mask1(new B): @throws[E2])
   mask1(new B1): @pure
+
+
+
+  // "mask = x"      <==>  "propagate all except x"
+  // "propagate = x  <==>  "mask all except x"
 
 
   def mask2(b1: B, b2: B): String @pc(b1.g, mask = throws[E1]) @pc(b2.g, mask = throws[E1 | E2]) = {
@@ -498,34 +645,33 @@ object Main {
 
 
 
-  def mask3(f: Int => String): String @pc(f.apply(%), mask = throws[Throwable]) @throws[E2] = try {
+  // propagating exceptions (like "anchored exceptions" paper)
+
+  def mask3(f: Int => String): String @pc(f.apply(%), mask = throws[Throwable], propagate = throws[E2]) = try {
     f(10)
   } catch {
     case e: E2 => throw e
     case e => "got some exception"
   }
 
-  // @TODO: this should be @pure, but it can't.. we don't see in the signature that
-  // E2 can only be thrown by the param call "b.g".
-  mask3((x: Int) => { throw new E1; "dlkfj" })
+  mask3((x: Int) => { throw new E1; "dlkfj" }): @pure
 
 
+  // here, the "propagates" is not needed, this is clear from the @pc.
 
-  // ==> Anchored exceptions have the concept of "propagating"
-  def mask4(b: B): String @pc(b.g, mask = throws[Throwable], propagate = throws[E2]) = try {
+  def mask4(b: B): String @pc(b.g, mask = throws[E1], propagate = throws[E2]) = try {
     b.g
   } catch {
     case e: E2 => throw e
-    case e => "got some other exception"
+    case e: E1 => "got e1"
   }
-
 
   mask4(new B1): @pure
 
 
 
 
-  // however, this is probably not useful in so many situations. example:
+  // here, E2 is also a latent effect of mask5
   def mask5(b: B): String @pc(b.g, mask = throws[Throwable]) @throws[E2] = try {
     b.g
     if (math.random < 0.5) throw new E2
@@ -560,14 +706,12 @@ object Main {
    *
    * TODO: this is in fact not so much an effect system, but rather a classical "pluggable
    * type system". question: are the two the same? can they be unified? or, more likely: can
-   * our effect system express arbitrary pluggable type systemsm?
+   * our effect system express arbitrary pluggable type systems?
    *
    */
 
   class definedAt[E <: Throwable] extends Effect
-  object caughtBy {
-    def apply[T](pf: PartialFunction[Throwable, T]) = new Effect {}
-  }
+  def caughtBy[T](pf: PartialFunction[Throwable, T]): Effect = throw new Error()
 
   val pf1: PartialFunction[Throwable, Int] @definedAt[E1] = {
     case e: E1 => 10
@@ -578,50 +722,50 @@ object Main {
   val pf3: PartialFunction[Throwable, Int] @definedAt[E1 | E2] = pf1 orElse pf2
 
 
-  /**
-   * guarded *union?) intersection types
-   *
-   */
-
 
   def myTry[T](body: => T) = new {
     def myCatch(handler: PartialFunction[Throwable, T]): T @pc(body, mask = caughtBy(handler)) @pc(handler(%)) = try {
       body
-    } catch {
-
-      /**
-       *  in princible, we want "catch handler", but that is not allowed
-       *
-       * the exception analysis has to figure out a lot of things to get the below working:
-       *  - that in the "then" branch, handler(e) is defined, i.e. won't throw MatchError
-       *  - that "e" is no more than the exceptions of "body", so "throw e" is covered by @pc(body). related to forwarding, see maks4 above.
-       *  - that "e" cannot be any of the effects where "handler" has @definedAt, i.e. that these are masked
-       */
-
-      case e =>
-        if (handler.isDefinedAt(e)) handler(e)
-        else throw e
-
-        /* another way:
-        try {
-          handler(e)
-        } catch {
-          case me: MatchError => throw e
-        }
-        */
-    }
+    } catch handler
   }
 
-  myTry {
+  // the following two should also be recognized
+/*
+  case e =>
+    if (handler.isDefinedAt(e)) handler(e)
+    else throw e
+
+  case e =>
+    try {
+      handler(e)
+    } catch {
+      case me: MatchError => throw e
+    }
+*/
+
+
+
+  (myTry {
     if (math.random < 0.5) throw new E1
     10
   } myCatch {
     case e: E1 => 11
-  }
+  }): @pure
+
+  (myTry {
+    if (math.random < 0.1) throw new E1
+    10
+  } myCatch pf2): @throws[E1]
 
 
 
+  val tried = (myTry {
+    if (math.random < 0.5) throw new E1
+    10
+  }): { def myCatch(h: PartialFunction[Throwable, Int]): Int @masked(throws[E1], caughtBy(h)) }
 
+
+  (tried myCatch pf1): @pure
 
 
 
