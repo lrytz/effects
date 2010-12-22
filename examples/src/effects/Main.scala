@@ -4,25 +4,59 @@ package effects
 // effect annotations
 trait Effect extends annotation.TypeConstraint
 
-// masking only on effect params and param calls!
-// class mask(effects: Effect*) extends TypeConstraint
-
-case class ep(name: Symbol /*, bounds: Effect* */) extends Effect
-
 // @TODO: is `pc` really a TypeConstraint? Look at the forwarding example, there it isn't really.
-// but otherwise, effects have to be TypeConstraints, this will make the applyFirst example work.
+// otherwise, do effects have to be TypeConstraints? it would maybe make the applyFirst example work if we use @ep('e)
+
+
 case class pc(call: Any, mask: Seq[Effect] = Nil, propagate: Seq[Effect] = Nil) extends Effect
 case class pcs(calls: Any*) extends Effect
 
+
+// @TODO: remove?
+case class ep(name: Symbol /*, bounds: Effect* */) extends Effect
+
+
+/**
+ * For polymorphic masking. When mask of a method depends on its
+ * arguments, one can use this annotation. Example
+ *
+ *   def f(h: PartialFunction[Throwable, Unit]): Unit @masked(throws[E1], caughtBy(h)) = try {
+ *     throw new E1
+ *   } catch h
+ */
 case class masked(eff: Effect, mask: Seq[Effect]) extends Effect
 
-// this means pure for all domains. pure inside domains can
-// be done individually (e.g. @throws[Nothing] for exceptions)
+
+/**
+ * this means pure for all domains that are currently being checked.
+ * for each domain, it is expanded to the bottom effect.
+ *
+ * can be combined with concrete effects, e.g.
+ *   def f(a: T): R @pure @throws[E1]
+ *
+ * this means that f throws E1, but is pure in the other
+ * active domains.
+ *
+ */
 class pure extends Effect
 object pure extends Effect
 
 
-// concrete effects
+/**
+ * for all active domains, infer the effect.
+ *
+ * can be comibend with concrete effects, e.g.
+ *   def f(a: T): R @infer @throws[E1]
+ *
+ * this mens that f throws E1, and the other effects are infered.
+ */
+class infer extends Effect
+object infer extends Effect
+
+
+/**
+ * Exceptions
+ */
 trait |[E1 <: Throwable, E2 <: Throwable] extends Throwable
 class throws[E <: Throwable] extends Effect
 object throws { def apply[E <: Throwable] = new throws[E] }
