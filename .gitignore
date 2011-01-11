@@ -1,0 +1,8 @@
+/.scala_dependencies
+/target
+/out
+/*.iml
+/*.ipr
+/*.iws
+/project/boot/
+/project/build/target/
