@@ -2,6 +2,8 @@ package effects
 
 import java.io.IOException
 
+// DDC splits it up into several, for example "Console", "FileSystem", "Network", ...
+
 class IO extends Effect
 object IO extends Effect
 
