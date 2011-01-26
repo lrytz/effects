@@ -1,8 +1,11 @@
 /.scala_dependencies
 /target
 /out
+/bin
 /*.iml
 /*.ipr
 /*.iws
+/.classpath
+/.project
 /project/boot/
 /project/build/target/
