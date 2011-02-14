@@ -19,29 +19,41 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent {
 
   /**
    * When the result type does not have an effect annotation and the
-   * method is not part of an API, then the effect should be inferred.
+   * method is not part of an API or there is the @infer annotation,
+   * then the effect should be inferred.
+   *
+   * @TODO: infer public final methods? if so, also check for final owner.
+   *
+   * @TODO: also infer if there's a private or local owner somewhere! e.g.
+   *   val c = {
+   *     class anon extends C {
+   *       def f(): Int = 1           // should infer effect of f
+   *     }
+   *     new anon
+   *   }
    */
   def inferEffect(sym: Symbol): Boolean = {
     !sym.owner.isClass ||
     sym.isPrivate ||
-    sym.isFinal ||
+//    sym.isFinal ||
     sym.tpe.finalResultType.hasAnnotation(checker.inferAnnotation)
   }
 
   /**
-   * When the type (return type for methods) was inferred and the
-   * method is not part of an API, or there is the @infer annotation,
-   * then the effect should also be inferred.
+   * When the type of a value (return type for methods) was inferred
+   * and the definition is not part of an API, or there is the @refine
+   * annotation, refinement type with more precise effects should be
+   * inferred.
    *
-   * @TODO: infer public final functions? and if so, check for final owner.
+   * @TODO: infer for final?
    */
   def inferRefinement(sym: Symbol, inferType: Boolean): Boolean = {
     inferType && (
       !sym.owner.isClass ||
-      sym.isPrivate ||
-      sym.isFinal
+      sym.isPrivate
+//      sym.isFinal
     ) ||
-    sym.tpe.finalResultType.hasAnnotation(checker.inferAnnotation)
+    sym.tpe.finalResultType.hasAnnotation(checker.refineAnnotation)
   }
 
 
@@ -49,31 +61,31 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent {
    * Collect:
    *  - DefDef when the result type does not have an effect annotation
    *  - ValDef and DefDef, because the type might become a refinement
-   * See comments in the EffectChecker.
+   * See comm`ents in the EffectChecker.
    */
   val traverseDefs = new Traverser {
     override def traverse(tree: Tree) {
       tree match {
-        case dd @ DefDef(_, _, _, _, _, _) =>
+        case dd @ DefDef(_, _, _, _, tt @ TypeTree(), rhs) =>
           val sym = dd.symbol
           val tp = sym.tpe
           if (checker.fromAnnotation(tp.finalResultType).isEmpty) {
             if (inferEffect(sym)) checker.inferEffect(sym) = dd
-            else checker.setEffect(sym, checker.lattice.top)
+            else checker.updateEffect(sym, checker.lattice.top)
           }
 
-          // @TODO: look at `original` to know about type inference?
-          val tt @ TypeTree() = dd.tpt
-          if (inferRefinement(sym, tt.original == null))
+          // @TODO: is `wasEmpty` always correct, i.e. does it mean `type was inferred`?
+          if (!rhs.isEmpty && inferRefinement(sym, tt.wasEmpty))
             checker.refineType(sym) = dd
 
-        case vd @ ValDef(_, _, tt @ TypeTree(), _)=>
+        case vd @ ValDef(_, _, tt @ TypeTree(), rhs) if !rhs.isEmpty =>
           val sym = vd.symbol
-          if (inferRefinement(sym, tt.original == null))
+          if (inferRefinement(sym, tt.wasEmpty))
             checker.refineType(sym) = vd
 
         case _ => ()
       }
+      super.traverse(tree)
     }
   }
 }

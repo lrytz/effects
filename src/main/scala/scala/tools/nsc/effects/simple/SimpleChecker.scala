@@ -15,7 +15,7 @@ class SimpleChecker(val global: Global) extends EffectChecker[SimpleLattice] {
   val lattice = new SimpleLattice
 
 
-  // encoding in annotations
+  // encoding as annotations
 
   val effClass   = definitions.getClass("scala.annotation.effects.simple.eff")
   val noEffClass = definitions.getClass("scala.annotation.effects.simple.noEff")
@@ -34,5 +34,4 @@ class SimpleChecker(val global: Global) extends EffectChecker[SimpleLattice] {
     case Eff =>   AnnotationInfo(effClass.tpe, Nil, Nil)
     case NoEff => AnnotationInfo(noEffClass.tpe, Nil, Nil)
   }
-
 }
