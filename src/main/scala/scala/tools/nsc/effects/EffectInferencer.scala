@@ -1,9 +1,10 @@
 package scala.tools.nsc.effects
 
 import scala.tools.nsc._
-import scala.tools.nsc.plugins.PluginComponent
+import transform.{Transform, TypingTransformers}
+import plugins.PluginComponent
 
-abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent {
+abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent with Transform with TypingTransformers {
 
   val checker: EffectChecker[L]
   protected type Elem = checker.Elem
@@ -11,11 +12,12 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent {
   val global: checker.global.type = checker.global
   import checker.global._
 
-  def newPhase(prev: Phase): Phase = new StdPhase(prev) {
-    def apply(unit: CompilationUnit) {
-      traverseDefs(unit.body)
-    }
-  }
+// Not needed, implemented by trait `Transform`
+//  def newPhase(prev: Phase): Phase = new StdPhase(prev) {
+//    def apply(unit: CompilationUnit) {
+//      inferTransformer(unit).transformUnit(unit)
+//    }
+//  }
 
   /**
    * When the result type does not have an effect annotation and the
@@ -48,12 +50,15 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent {
    * @TODO: infer for final?
    */
   def inferRefinement(sym: Symbol, inferType: Boolean): Boolean = {
-    inferType && (
-      !sym.owner.isClass ||
-      sym.isPrivate
+    // Unit is never refined
+    sym.tpe.finalResultType.typeSymbol != definitions.UnitClass && {
+      inferType && (
+        !sym.owner.isClass ||
+          sym.isPrivate
 //      sym.isFinal
-    ) ||
-    sym.tpe.finalResultType.hasAnnotation(checker.refineAnnotation)
+        ) ||
+        sym.tpe.finalResultType.hasAnnotation(checker.refineAnnotation)
+    }
   }
 
 
@@ -63,29 +68,71 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent {
    *  - ValDef and DefDef, because the type might become a refinement
    * See comm`ents in the EffectChecker.
    */
-  val traverseDefs = new Traverser {
-    override def traverse(tree: Tree) {
+  def newTransformer(unit: CompilationUnit) = new TypingTransformer(unit) {
+    override def transform(tree: Tree): Tree = {
       tree match {
         case dd @ DefDef(_, _, _, _, tt @ TypeTree(), rhs) =>
           val sym = dd.symbol
           val tp = sym.tpe
-          if (checker.fromAnnotation(tp.finalResultType).isEmpty) {
-            if (inferEffect(sym)) checker.inferEffect(sym) = dd
-            else checker.updateEffect(sym, checker.lattice.top)
-          }
 
+          /**
+           * @TODO: VERY PROBLEMATIC for multiple effect systems.
+           *
+           * When a refinement needs to be inferred in more than one system,
+           * the already existing ones must stay!!!
+           */
+
+          val hasNoE = checker.fromAnnotation(tp.finalResultType).isEmpty
+          val inferE = hasNoE && inferEffect(sym)
           // @TODO: is `wasEmpty` always correct, i.e. does it mean `type was inferred`?
-          if (!rhs.isEmpty && inferRefinement(sym, tt.wasEmpty))
+          val inferT = !rhs.isEmpty && inferRefinement(sym, tt.wasEmpty)
+
+          if (inferE)
+            checker.inferEffect(sym) = dd
+          else if (hasNoE)
+            checker.updateEffect(sym, checker.lattice.top)
+
+          if (inferT)
             checker.refineType(sym) = dd
+
+          if (inferE || inferT)
+            // @TODO: updateInfo makes assertion crash..
+            sym.setInfo(mkLazyType(sym => {
+              // @TODO: if !hasNoE, then we need to keep the annotated effect!!!
+              val refinedType =
+                if (inferT) checker.computeType(sym, tp, typer, currentClass, unit)
+                else tp
+
+              val annotType =
+                if (inferE) checker.typeWithEffect(tp, checker.computeEffect(sym))
+                else tp
+
+              // @TODO: lazy types should probably not remain in TypeHistory...
+              sym.updateInfo(annotType)
+            }))
 
         case vd @ ValDef(_, _, tt @ TypeTree(), rhs) if !rhs.isEmpty =>
           val sym = vd.symbol
-          if (inferRefinement(sym, tt.wasEmpty))
+          val tp = sym.tpe
+          if (inferRefinement(sym, tt.wasEmpty)) {
             checker.refineType(sym) = vd
+            sym.setInfo(mkLazyType(sym => {
+              sym.updateInfo(checker.computeType(sym, tp, typer, currentClass, unit))
+            }))
+          }
 
+        case DefDef(_, _, _, _, _, _) => abort("Unexpected DefDef: no tpt @ TypeTree()")
+        case ValDef(_, _, _, _)       => abort("Unexpected ValDef: no tpt @ TypeTree()")
         case _ => ()
       }
-      super.traverse(tree)
+
+      super.transform(tree)
+    }
+  }
+
+  def mkLazyType(c: Symbol => Unit) = new LazyType {
+    override def complete(s: Symbol) {
+      c(s)
     }
   }
 }
