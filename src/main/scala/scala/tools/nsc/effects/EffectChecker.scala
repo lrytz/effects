@@ -227,13 +227,13 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   class Checker(unit: CompilationUnit) extends TypingTransformer(unit) {
     override def transform(tree: Tree): Tree = {
       tree match {
-        case dd @ DefDef(_, _, _, _, _, _) =>
+        case dd @ DefDef(_, _, _, _, _, rhs) if !rhs.isEmpty =>
           val td = super.transform(dd).asInstanceOf[DefDef]
-          checkDefDef(td, localTyper, currentClass, unit)
+          checkDefDef(td, localTyper, currentOwner, unit)
 
-        case vd @ ValDef(_, _, _, _) =>
+        case vd @ ValDef(_, _, _, rhs) if !rhs.isEmpty =>
           val td = super.transform(vd).asInstanceOf[ValDef]
-          checkValDef(td, localTyper, currentClass, unit)
+          checkValDef(td, localTyper, currentOwner, unit)
 
         case _ =>
           super.transform(tree)
@@ -250,7 +250,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    *
    * @TODO: do nothing if return type is "Unit", just return the DefDef
    */
-  def checkDefDef(dd: DefDef, typer: Typer, enclClass: Symbol, unit: CompilationUnit): DefDef = {
+  def checkDefDef(dd: DefDef, typer: Typer, owner: Symbol, unit: CompilationUnit): DefDef = {
     val sym = dd.symbol
 
     val symEff = fromAnnotation(sym.tpe).getOrElse(abort("no latent effect annotation on "+ sym))
@@ -268,7 +268,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
         dd.rhs
       } else {
         // Check or infer the return type
-        val rhs1 = refine(dd.rhs, typer, enclClass, unit)
+        val rhs1 = refine(dd.rhs, typer, owner, unit)
         checkRefinement(dd, rhs1.tpe, symTp)
         rhs1
       }
@@ -321,13 +321,13 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     } */
   }
 
-  def checkValDef(vd: ValDef, typer: Typer, enclClass: Symbol, unit: CompilationUnit): ValDef = {
+  def checkValDef(vd: ValDef, typer: Typer, owner: Symbol, unit: CompilationUnit): ValDef = {
     val sym = vd.symbol
 
     val symTp = sym.tpe
 
     val refinedRhs = transformed.getOrElse(sym, {
-      val rhs1 = refine(vd.rhs, typer, enclClass, unit)
+      val rhs1 = refine(vd.rhs, typer, owner, unit)
       checkRefinement(vd, rhs1.tpe, symTp)
       rhs1
     })
@@ -357,9 +357,24 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   }
 
   def checkRefinement(tree: Tree, tp1: Type, tp2: Type) {
+    /**
+     * annotsInferMode enables the AnnotationCheckers for checking
+     * refinements, e.g.
+     *   tp1 = (Int => Int) { def apply(x: Int): Int @noEff }
+     *   tp2 = (Int => Int) { def apply(x: Int): Int @eff }
+     *
+     * BUT: Types of trees do NOT contain latent effects, e.g.
+     *   tp1 = ConstantType(Int(1))
+     *   tp2 = Int @noEff
+     *
+     * => since we enable the AnnotationChecker, we have to remove
+     *    the latent effect from `tp2`. Latent effects are checked
+     *    seperately.
+     */
+    val tp2WithoutEffect = onResultType(tp2, rt => removeAnnotations(rt, annotationClasses))
     // @TODO: should only enable annotation checking for current effect system, not for all
-    if (!annotsInferMode(tp1 <:< tp2)) {
-      refinementError(tree, tp1, tp2)
+    if (!annotsInferMode(tp1 <:< tp2WithoutEffect)) {
+      refinementError(tree, tp2, tp1)
     }
   }
 
@@ -368,41 +383,62 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * COMPUTING REFINEMENTS
    ************************/
 
-  def refine(tree: Tree, typer: Typer, enclClass: Symbol, unit: CompilationUnit): Tree = {
-    val refiner = new RefineTransformer(unit, typer, enclClass, tree)
+  def refine(tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit): Tree = {
+    val refiner = new RefineTransformer(unit, typer, owner, tree)
     refiner.refine()
   }
 
   /**
    * Only works if `sym` is in the map `refineType`, i.e. if the refinement of `sym` is being inferred.
    */
-  def refineRhs(sym: Symbol, typer: Typer, enclClass: Symbol, unit: CompilationUnit): Tree = {
+  def refineRhs(sym: Symbol, typer: Typer, owner: Symbol, unit: CompilationUnit): Tree = {
     val rhs = refineType(sym) match {
       case DefDef(_, _, _, _, _, rhs) => rhs
       case ValDef(_, _, _, rhs)       => rhs
     }
-    refine(rhs, typer, enclClass, unit)
+    refine(rhs, typer, owner, unit)
   }
 
   /**
    * Returns the type of the "rhs" of the definition for "sym".
    */
-  def computeType(sym: Symbol, origTp: Type, typer: Typer, enclClass: Symbol, unit: CompilationUnit): Type = {
-    // also, "inferType" could return the MethodType instead of just the return type (rhs type)
-    val refined = refineRhs(sym, typer, enclClass, unit)
-    transformed(sym) = refined
+  def computeType(sym: Symbol, origTp: Type, typer: Typer, owner: Symbol, unit: CompilationUnit): Type = {
+    // computeType can be called multiple times (value, getter, setter)
+    val refined = transformed.getOrElseUpdate(sym, refineRhs(sym, typer, owner, unit))
 
     val packed = typer.packedType(refined, sym)
-    val resTp = typer.namer.widenIfNecessary(sym, packed, WildcardType)
+    val widened = typer.namer.widenIfNecessary(sym, packed, WildcardType)
 
-    onResultType(origTp, tp => resTp)
+    /**
+     * Effect annotations on the tree make no sense, need to remove them! Otherwise
+     *
+     *   def foo(x: Int): Int @infer = x
+     *   def bar: Int @refine = foo(1)
+     *
+     * "bar" will have effect "@eff" (because it's a method) and "@noEff" (because
+     * the inferred type of "foo(1)" is "Int @noEff"
+     */
+    val resTp = removeAnnotations(widened, annotationClasses)
+
+    // @TODO: more systematic way to keep existing effects...
+    // maybe the right solution is to store the latent effect annotations in the rhs trees, not only on the result type.
+
+    // LATER: probably not keep latent effect in trees:
+    //   - deleting and re-typing will remove that information
+    //   - it heavily conflicts with the way TypeConstraints work! if we select a Symbol with @noEff, the latent
+    //     effect can still be @eff. But the typer will assing a type with @noEff
+
+
+    onResultType(origTp, tp => resTp.withAnnotations(tp.annotations))
   }
 
 
 
   // @TODO: maybe have anoter parameter "pt", which will be used for re-type-to
-  class RefineTransformer(unit: CompilationUnit, typer: Typer, enclClass: Symbol, tree: Tree) extends TypingTransformer(unit) {
+  class RefineTransformer(unit: CompilationUnit, typer: Typer, owner: Symbol, tree: Tree) extends TypingTransformer(unit) {
     localTyper = typer
+    currentOwner = owner
+
     var result = tree
 
     def refine(): Tree = {
@@ -410,17 +446,14 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       localTyper.typed(result)
     }
 
-    protected def untypeTo(stop: Tree) {
+    protected def untypeTo(stop: Tree, untypeStop: Boolean = false) {
       // transformer because it might remove some "TypeApply" nodes
-      result = new ResetTransformer(stop).transform(result)
+      result = new ResetTransformer(stop, untypeStop).transform(result)
     }
 
-    protected def untypeIfLazy(tree: Tree): Tree = {
-      // no need to traverse the qualifier
-      val sym = tree.symbol
-      if (refineType.contains(sym) && !sym.rawInfo.isComplete) {
-        tree.tpe
-        untypeTo(tree)
+    protected def untypeIfRefined(tree: Tree): Tree = {
+      if (refineType.contains(tree.symbol)) {
+        untypeTo(tree, true)
       }
       tree
     }
@@ -434,20 +467,30 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       */
 
       case Function(params, body) =>
-        val eff = computeEffect(body)
-//        val enclClass = localTyper.context.enclClass.owner
-        val refinedType = addFunctionRefinement(tree.tpe, eff, enclClass, tree.pos)
-        if (refinedType != tree.tpe) {
+        val refinedBody = EffectChecker.this.refine(body, localTyper, owner, unit)
+        val restpe = localTyper.packedType(refinedBody, tree.symbol).deconst
+        val funtpe =
+          if (restpe == tree.tpe) tree.tpe
+          else tree.tpe match {
+            case TypeRef(pre, sym, args) => typeRef(pre, sym, args.dropRight(1) :+ restpe)
+            case RefinedType(parents, decls) => abort("todo: handle multiple refinements of functions")
+          }
+
+        val eff = computeEffect(refinedBody)
+        val refinedType = addFunctionRefinement(funtpe, eff, currentClass, tree.pos)
+        if (refinedType != funtpe) {
           tree.tpe = refinedType
           untypeTo(tree)
         }
-        tree
+
+        treeCopy.Function(tree, params, refinedBody)
 
       case Select(qual, name) =>
-        untypeIfLazy(tree)
+        // @TODO: maybe untype qualifier?
+        untypeIfRefined(tree)
 
       case Ident(name) =>
-        untypeIfLazy(tree)
+        untypeIfRefined(tree)
 
       case _ =>
         super.transform(tree)
@@ -461,7 +504,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     /**
      * A Transformer that removes types and symbols on the path to the tree `stop`.
      */
-    private class ResetTransformer(stop: Tree) extends Transformer {
+    private class ResetTransformer(stop: Tree, untypeStop: Boolean) extends Transformer {
       private val trace: m.Stack[Tree] = new m.Stack()
 
       private def reset(tree: Tree) {
@@ -480,6 +523,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
 
       override def transform(tree: Tree): Tree = {
         if (tree == stop) {
+          if (untypeStop) trace.push(tree)
           for (t <- trace)
             reset(t)
           tree
@@ -564,7 +608,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    ********************/
 
   def computeEffect(sym: Symbol): Elem = {
-    computeEffect(inferEffect(sym))
+    computeEffect(inferEffect(sym).rhs)
   }
 
   /**
@@ -593,6 +637,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
         case ModuleDef(_, _, _)                       => ()
         case DefDef(_, _, _, _, _, _)                 => ()
         case ValDef(_, _, _, _) if tree.symbol.isLazy => ()
+        case Function(_, _)                           => ()
 
         /** @TODO on Select and Ident
           *  - effect of module constructor!!! (happens when module is accessed for the first time)
@@ -613,12 +658,12 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
 
         case Select(qual, _) =>
           traverse(qual)
-          add(computeApplicationEffect(tree))
-          // TODO: is evey Select an application? is what we do here correct in other cases?
+          if (tree.symbol.isMethod)
+            add(computeApplicationEffect(tree))
 
         case Ident(_) =>
-          add(computeApplicationEffect(tree))
-          // TODO: is evey Ident an application? is what we do here correct in other cases?
+          if (tree.symbol.isMethod)
+            add(computeApplicationEffect(tree))
 
         case _ =>
           super.traverse(tree)
@@ -652,6 +697,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     protected def computeApplicationEffect(fun: Tree, targs: List[Tree] = Nil, argss: List[List[Tree]] = Nil) = {
       val sym = fun.symbol
       val eff = fromAnnotation(sym.tpe) // will complete lazy type if necessary
+      println("effect of applying "+ sym +": "+ eff)
       eff.getOrElse(lattice.top) // @TODO: top by default?
     }
   }
@@ -717,7 +763,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * to the annotated one.
    */
   def effectError(tree: Tree, expected: Elem, found: Elem) {
-    unit.error(tree.pos, "effect error.\nexpected: "+ expected +"\nfound: "+ found)
+    unit.error(tree.pos, "effect mismatch;\n found   : "+ found +"\n required: "+ expected)
   }
 
   /**
@@ -729,7 +775,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   }
 
   def refinementError(tree: Tree, expected: Type, found: Type) {
-    unit.error(tree.pos, "effect type error.\nexpected: "+ expected +"\nfound: "+ found)
+    unit.error(tree.pos, "effect type mismatch;\n found   : "+ found +"\n required: "+ expected)
   }
 
 }

@@ -23,10 +23,13 @@ class SimpleChecker(val global: Global) extends EffectChecker[SimpleLattice] {
   val annotationClasses = List(effClass, noEffClass)
 
   def fromAnnotation(annots: List[AnnotationInfo]) = {
-    val effAnnot = annots.filter(_.atp.typeSymbol == effClass).headOption
-    effAnnot.map(_ => Eff) orElse {
-      val noEffAnnot = annots.filter(_.atp.typeSymbol == noEffClass).headOption
-      noEffAnnot.map(_ => NoEff)
+    val pureAnnot = annots.filter(_.atp.typeSymbol == pureAnnotation).headOption
+    pureAnnot.map(_ => NoEff) orElse {
+      val effAnnot = annots.filter(_.atp.typeSymbol == effClass).headOption
+      effAnnot.map(_ => Eff) orElse {
+        val noEffAnnot = annots.filter(_.atp.typeSymbol == noEffClass).headOption
+        noEffAnnot.map(_ => NoEff)
+      }
     }
   }
 
