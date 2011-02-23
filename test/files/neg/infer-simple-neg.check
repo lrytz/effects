@@ -1,0 +1,6 @@
+infer-simple-neg.scala:6: error: effect mismatch;
+ found   : Eff
+ required: NoEff
+  def v1: Int @noEff = f1
+      ^
+one error found

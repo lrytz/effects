@@ -1,0 +1,74 @@
+import annotation.effects._; import simple._
+
+
+NOTES
+=====
+
+
+
+
+BUGS
+
+====
+
+====
+
+
+
+
+TESTS
+=====
+
+def f: Int @infer = 1         // Int @noEff
+def f: Int @refine = 1        e// Int @eff
+def f: Int @infer @refine = 1 // Int @noEff
+
+def f = 1                     // Int @eff
+
+def f: Int @infer = { eff(); 1 }   // Int @eff
+
+val x = () => 1              // (Int => Int) { def apply(): Int @noEff }
+def foo() = x()              // infer @noEff
+
+val x = () => { eff(); 1 }
+def foo() = x()              // infer @eff
+
+val x: (() => Int) { def apply(): Int @noEff } = () => { eff(); 1 }  // error
+val x: (() => Int) { def apply(): Int @eff } = () => { eff(); 1 }    // ok
+
+
+val f = (x: Int) => x
+def m(x: Int) = f(x)   // @noEff
+
+
+val f = (x: Int) => (y: Int) => x + y
+def m(y: Int): (Int => Int) @refine @infer = f(y)  // (Int)(Int => Int){def apply(x$1: Int): Int @eff} @noEff
+def n(z: Int): Int @infer = m(z)(10)               // (Int)Int @eff
+
+
+val f = (x: Int) => (y: Int) => x + y
+def g: ((Int) => Int) @refine @infer = f(1) // g: ((Int) => Int){def apply(x$1: Int): Int @eff} @noEff
+
+
+
+
+abstract class C { def f: Int }
+def c: C @infer @refine = new C { def f: Int @infer = 1 }
+def bar: Int @infer = c.f                                 // infer @eff (`c` has eff, from constructor)
+val c1: C @refine = new C { def f: Int @infer = 1 }
+def bar1: Int @infer = c1.f                               // infer @noEff
+
+
+abstract class C { def f: Int }
+def foo(c: C) = c.f
+
+
+object t { val f: (() => Int) { def apply(): Int @eff } = () => 1 }
+val g = t.f    // g: (() => Int){def apply(): Int @scala.annotation.effects.simple.eff}
+
+
+
+def foo(x: Int): Int @infer = x
+def bar: Int @refine = foo(1)
+def baz: Int @infer = foo(1)
+
