@@ -1,11 +1,20 @@
 /.scala_dependencies
+
+# out directories
 /target
 /out
 /bin
+
+# intellij, eclipse
 /*.iml
 /*.ipr
 /*.iws
 /.classpath
 /.project
+/*.launch
+/.externalToolBuilders/
+/.settings/
+
+# sbt
 /project/boot/
 /project/build/target/

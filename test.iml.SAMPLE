@@ -10,12 +10,11 @@
   </component>
   <component name="NewModuleRootManager" inherit-compiler-output="true">
     <exclude-output />
-    <content url="file://$MODULE_DIR$/src/main">
-      <sourceFolder url="file://$MODULE_DIR$/src/main/scala" isTestSource="false" />
-    </content>
+    <content url="file://$MODULE_DIR$/test/files" />
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="library" name="scala-effects" level="project" />
+    <orderEntry type="module" module-name="plugin" />
   </component>
 </module>
 
