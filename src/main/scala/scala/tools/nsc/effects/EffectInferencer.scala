@@ -1,10 +1,10 @@
 package scala.tools.nsc.effects
 
 import scala.tools.nsc._
-import transform.{Transform, TypingTransformers}
+import transform.{InfoTransform, TypingTransformers}
 import plugins.PluginComponent
 
-abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent with Transform with TypingTransformers {
+abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent with InfoTransform with TypingTransformers {
 
   val checker: EffectChecker[L]
   import checker._
@@ -12,6 +12,30 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
 
   val global: checker.global.type = checker.global
   import global._
+
+  /**
+   * The EffectInferencer has to be a dummy InfoTransformer. This is to invalidate
+   * caches of symbol types, because types can change. Example:
+   *
+   *   val f7: (Int => Int) @refine = (x: Int) => x    // (1)
+   *   def v7(x: Int): Int @noEff = f7.apply(x)        // (2)
+   *
+   * The type of "val f7" (1) changes to a "RefinedType".
+   *
+   * When re-typechecking Select(this.f7, apply) of (2), the type of "this.f7"
+   * is "SingleType(this, f7)".
+   *
+   * typedSelect calls "memberType" on this SingleType, which calls "underlying",
+   * which has a cache.
+   * The "underlying" of f7 is now different, it used to be "Int => Int", now it's
+   * the "RefinedType(Int => Int, {def apply})".
+   *
+   * If there's no InfoTransform, the cache is not invalidated!
+   *
+   * Since InfoTransformers are only applied at the next phase, we need to make
+   * the EffectInferencer an InfoTransform, not the EffectChecker.
+   */
+  def transformInfo(sym: Symbol, tp: Type): Type = tp
 
 // Not needed, implemented by trait `Transform`
 //  def newPhase(prev: Phase): Phase = new StdPhase(prev) {
@@ -117,27 +141,28 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
           val inferT = !rhs.isEmpty && inferRefinement(sym, tt.wasEmpty)
 
           if (inferE)
-            checker.inferEffect(sym) = dd
+            checker.inferEffect += sym
           else if (hasNoE)
             updateEffect(sym, lattice.top)
 
           if (inferT)
-            refineType(sym) = dd
+            refineType += sym
 
           val tp = sym.tpe // updateEffect called above changes this type (adds an effect)!
           if (inferE || inferT)
-            // @TODO: updateInfo to lazy type is not allowed. Is setInfo OK?
+            // updateInfo to lazy type is not allowed
             sym.setInfo(mkLazyType(sym => {
               val refinedType =
-                if (inferT) computeType(sym, tp, transTyper, transOwner, unit)
+                if (inferT) computeType(sym, rhs, tp, transTyper, transOwner, unit)
                 else tp
 
               val annotType =
-                if (inferE) typeWithEffect(refinedType, computeEffect(sym))
+                if (inferE) typeWithEffect(refinedType, computeEffect(sym, rhs, transTyper, transOwner, unit))
                 else refinedType
 
-              // @TODO: lazy types should probably not remain in TypeHistory...
-              sym.updateInfo(annotType)
+              // setInfo so that the lazy type doesn't remain in type history. otherwise
+              // it can be called again in a later run, which is problematic / wrong.
+              sym.setInfo(annotType)
             }))
 
         case vd @ ValDef(_, _, tt @ TypeTree(), rhs) =>
@@ -150,26 +175,26 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
               updateEffect(setter, setterEffect(setter))
           } else {
             val tp = sym.tpe
-            refineType(sym) = vd
+            refineType += sym
 
             sym.setInfo(mkLazyType(_ => {
-              sym.updateInfo(computeType(sym, tp, transTyper, transOwner, unit))
+              sym.setInfo(computeType(sym, rhs, tp, transTyper, transOwner, unit))
             }))
 
             val getter = sym.getter(sym.owner)
             if (getter != NoSymbol)
               getter.setInfo(mkLazyType(_ => {
-                val refinedType = computeType(sym, tp, transTyper, transOwner, unit)
+                val refinedType = computeType(sym, rhs, tp, transTyper, transOwner, unit)
                 val getterType = typeWithEffect(NullaryMethodType(refinedType), getterEffect(getter))
-                getter.updateInfo(getterType)
+                getter.setInfo(getterType)
               }))
 
             val setter = sym.setter(sym.owner)
             if (setter != NoSymbol)
               setter.setInfo(mkLazyType(_ => {
-                val arg = setter.newSyntheticValueParam(computeType(sym, tp, transTyper, transOwner, unit))
+                val arg = setter.newSyntheticValueParam(computeType(sym, rhs, tp, transTyper, transOwner, unit))
                 val setterType = typeWithEffect(MethodType(List(arg), definitions.UnitClass.tpe), setterEffect(setter))
-                setter.updateInfo(setterType)
+                setter.setInfo(setterType)
               }))
           }
 
@@ -184,7 +209,8 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
 
   def mkLazyType(c: Symbol => Unit) = new LazyType {
     override def complete(s: Symbol) {
-      c(s)
+      // run in next phase, so that caches are invalidated, see comment on transformInfo.
+      atPhase(phase.next)(c(s))
     }
   }
 }

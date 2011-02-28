@@ -29,7 +29,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    *  - final methods (maybe?)
    *  - methods annotated with @infer
    */
-  val inferEffect: m.Map[Symbol, DefDef] = new m.HashMap()
+  val inferEffect: m.Set[Symbol] = new m.HashSet()
 
   /**
    * Contains symbols whose type might be refined with effect
@@ -45,7 +45,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    *   val x = new C { def foo() = 1 }
    * the type of `x` changes from `C` to `C { def foo(): Int @pure }`
    */
-  val refineType: m.Map[Symbol, DefTree] = new m.HashMap()
+  val refineType: m.Set[Symbol] = new m.HashSet()
 
   // @TODO: probably not needed with the `transformed` map below
   val refinedSymbols: m.Set[Symbol] = new m.HashSet()
@@ -67,7 +67,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    *  - to check if `computeEffect` has already been run before
    *    looking at `rhs.tpe`
    */
-  val rhsEffect: m.Map[Symbol, Elem] = new m.HashMap()
+  // val rhsEffect: m.Map[Symbol, Elem] = new m.HashMap()
 
 
 
@@ -256,23 +256,35 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     val symEff = fromAnnotation(sym.tpe).getOrElse(abort("no latent effect annotation on "+ sym))
     val symTp = sym.tpe.finalResultType // @TODO: what about type parameters? def f[T](x: T): T = x
 
-    if (!inferEffect.contains(sym)) {
+    if (!inferEffect(sym)) {
       // Check or infer the latent effect
-      val rhsEff = computeEffect(dd.rhs)
+      val rhsEff = computeEffect(sym, dd.rhs, typer, owner, unit)
       if (!lattice.lte(rhsEff, symEff))
         effectError(dd, symEff, rhsEff)
     }
 
-    val refinedRhs = transformed.getOrElse(sym, {
-      if (sym.isConstructor) {
-        dd.rhs
+    /**
+     * Note that "computeEffect" might call "refine" on the rhs, and put the
+     * result into the "transformed" map. This makes the followin example work:
+     *
+     *   def f: (() => Int) @infer @refine = () => 1
+     *   def v: Int @noEff = f.apply()
+     *
+     * Initial type checking assigns the symbol "Function0.apply" to "f.apply",
+     * which has the maximal effect. Calling "refine" on the rhs assings to
+     * "f.apply" the symbol "<refinement>.apply", which is pure.
+     */
+
+    val refinedRhs =
+      if (refineType(sym) || sym.isConstructor) {
+        // @TODO: assert(transformed.contains(sym)) ??? probably false for constructors
+        transformed.getOrElse(sym, dd.rhs)
       } else {
         // Check or infer the return type
-        val rhs1 = refine(dd.rhs, typer, owner, unit)
+        val rhs1 = transformed.getOrElseUpdate(sym, refine(dd.rhs, typer, owner, unit))
         checkRefinement(dd, rhs1.tpe, symTp)
         rhs1
       }
-    })
 
     // check the latent effect and return type for all overridden methods
     for (os <- sym.allOverriddenSymbols) {
@@ -326,11 +338,16 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
 
     val symTp = sym.tpe
 
-    val refinedRhs = transformed.getOrElse(sym, {
-      val rhs1 = refine(vd.rhs, typer, owner, unit)
-      checkRefinement(vd, rhs1.tpe, symTp)
-      rhs1
-    })
+    val refinedRhs =
+      if (refineType(sym)) {
+        // @TODO: assert(transformed.contains(sym)) ???
+        transformed.getOrElse(sym, vd.rhs)
+      } else {
+        // Check or infer the return type
+        val rhs1 = transformed.getOrElseUpdate(sym, refine(vd.rhs, typer, owner, unit))
+        checkRefinement(vd, rhs1.tpe, symTp)
+        rhs1
+      }
 
     for (os <- sym.allOverriddenSymbols) {
       checkRefinement(vd, os.tpe, symTp)
@@ -383,28 +400,12 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * COMPUTING REFINEMENTS
    ************************/
 
-  def refine(tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit): Tree = {
-    val refiner = new RefineTransformer(unit, typer, owner, tree)
-    refiner.refine()
-  }
-
-  /**
-   * Only works if `sym` is in the map `refineType`, i.e. if the refinement of `sym` is being inferred.
-   */
-  def refineRhs(sym: Symbol, typer: Typer, owner: Symbol, unit: CompilationUnit): Tree = {
-    val rhs = refineType(sym) match {
-      case DefDef(_, _, _, _, _, rhs) => rhs
-      case ValDef(_, _, _, rhs)       => rhs
-    }
-    refine(rhs, typer, owner, unit)
-  }
-
   /**
    * Returns the type of the "rhs" of the definition for "sym".
    */
-  def computeType(sym: Symbol, origTp: Type, typer: Typer, owner: Symbol, unit: CompilationUnit): Type = {
+  def computeType(sym: Symbol, rhs: Tree, origTp: Type, typer: Typer, owner: Symbol, unit: CompilationUnit): Type = {
     // computeType can be called multiple times (value, getter, setter)
-    val refined = transformed.getOrElseUpdate(sym, refineRhs(sym, typer, owner, unit))
+    val refined = transformed.getOrElseUpdate(sym, refine(rhs, typer, owner, unit))
 
     val packed = typer.packedType(refined, sym)
     val widened = typer.namer.widenIfNecessary(sym, packed, WildcardType)
@@ -432,7 +433,10 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     onResultType(origTp, tp => resTp.withAnnotations(tp.annotations))
   }
 
-
+  def refine(tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit): Tree = {
+    val refiner = new RefineTransformer(unit, typer, owner, tree)
+    refiner.refine()
+  }
 
   // @TODO: maybe have anoter parameter "pt", which will be used for re-type-to
   class RefineTransformer(unit: CompilationUnit, typer: Typer, owner: Symbol, tree: Tree) extends TypingTransformer(unit) {
@@ -452,7 +456,9 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     }
 
     protected def untypeIfRefined(tree: Tree): Tree = {
-      if (refineType.contains(tree.symbol)) {
+      val sym = tree.symbol
+      // for fields, the symbol of Select is the getter, while refineType contains the field
+      if (refineType(sym) || (sym.isGetter && refineType(sym.accessed))) {
         untypeTo(tree, true)
       }
       tree
@@ -467,7 +473,8 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       */
 
       case Function(params, body) =>
-        val refinedBody = EffectChecker.this.refine(body, localTyper, owner, unit)
+        val sym = tree.symbol 
+        val refinedBody = transformed.getOrElseUpdate(sym, EffectChecker.this.refine(body, localTyper, owner, unit))
         val restpe = localTyper.packedType(refinedBody, tree.symbol).deconst
         val funtpe =
           if (restpe == tree.tpe) tree.tpe
@@ -476,7 +483,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
             case RefinedType(parents, decls) => abort("todo: handle multiple refinements of functions")
           }
 
-        val eff = computeEffect(refinedBody)
+        val eff = computeEffect(sym, refinedBody, localTyper, owner, unit)
         val refinedType = addFunctionRefinement(funtpe, eff, currentClass, tree.pos)
         if (refinedType != funtpe) {
           tree.tpe = refinedType
@@ -486,11 +493,12 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
         treeCopy.Function(tree, params, refinedBody)
 
       case Select(qual, name) =>
-        // @TODO: maybe untype qualifier?
         untypeIfRefined(tree)
+        super.transform(tree)
 
       case Ident(name) =>
         untypeIfRefined(tree)
+        super.transform(tree) // probably not needed, but well
 
       case _ =>
         super.transform(tree)
@@ -607,15 +615,13 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * COMPUTING EFFECTS
    ********************/
 
-  def computeEffect(sym: Symbol): Elem = {
-    computeEffect(inferEffect(sym).rhs)
-  }
-
   /**
    * Compute and return the effect caused by executing `tree`
    */
-  def computeEffect(tree: Tree) =
-    newEffectTraverser(tree).compute()
+  def computeEffect(sym: Symbol, tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit) = {
+    val refinedTree = transformed.getOrElseUpdate(sym, refine(tree, typer, owner, unit))
+    newEffectTraverser(refinedTree).compute()
+  }
 
   def newEffectTraverser(tree: Tree): EffectTraverser = new EffectTraverser(tree)
 
@@ -697,7 +703,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     protected def computeApplicationEffect(fun: Tree, targs: List[Tree] = Nil, argss: List[List[Tree]] = Nil) = {
       val sym = fun.symbol
       val eff = fromAnnotation(sym.tpe) // will complete lazy type if necessary
-      println("effect of applying "+ sym +": "+ eff)
+      // println("effect of applying "+ sym +": "+ eff)
       eff.getOrElse(lattice.top) // @TODO: top by default?
     }
   }

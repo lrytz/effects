@@ -3,4 +3,44 @@ infer-simple-neg.scala:6: error: effect mismatch;
  required: NoEff
   def v1: Int @noEff = f1
       ^
-one error found
+infer-simple-neg.scala:9: error: effect mismatch;
+ found   : Eff
+ required: NoEff
+  def v2: Int @noEff = f2
+      ^
+infer-simple-neg.scala:12: error: effect mismatch;
+ found   : Eff
+ required: NoEff
+  def v3: Int @noEff = f3
+      ^
+infer-simple-neg.scala:15: error: effect type mismatch;
+ found   : () => Int
+ required: (() => Int){def apply(): Int @scala.annotation.effects.simple.noEff} @scala.annotation.effects.simple.eff
+  def v41: (() => Int) { def apply(): Int @noEff } = f4
+      ^
+infer-simple-neg.scala:16: error: effect mismatch;
+ found   : Eff
+ required: NoEff
+  def v42: Int @noEff = f4()
+      ^
+infer-simple-neg.scala:19: error: effect type mismatch;
+ found   : (() => Int){def apply(): Int @scala.annotation.effects.simple.eff} @scala.annotation.effects.simple.noEff
+ required: (() => Int){def apply(): Int @scala.annotation.effects.simple.noEff} @scala.annotation.effects.simple.noEff
+  def v51: ((() => Int) { def apply(): Int @noEff }) @noEff = f5
+      ^
+infer-simple-neg.scala:20: error: effect mismatch;
+ found   : Eff
+ required: NoEff
+  def v52: Int @noEff = f5()
+      ^
+infer-simple-neg.scala:22: error: effect type mismatch;
+ found   : (() => Int){def apply(): Int @scala.annotation.effects.simple.eff}
+ required: (() => Int){def apply(): Int @scala.annotation.effects.simple.noEff}
+  val v6: (() => Int) { def apply(): Int @noEff } = () => { eff(); 1 }
+      ^
+infer-simple-neg.scala:28: error: effect mismatch;
+ found   : Eff
+ required: NoEff
+  def v72(): Int @noEff = f73(10)                        // error
+      ^
+9 errors found

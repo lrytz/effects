@@ -1,5 +1,35 @@
 import annotation.effects._; import simple._
 
+class t {
+  val f81: (() => () => Int) @refine = () => () => 1
+  def f82: (() => Int) @refine @infer = f81()
+  def v: (() => Int) { def apply(): Int @noEff } = f82
+}
+
+class t {
+  val f7: (Int => Int) @refine = (x: Int) => x
+  def v7(x: Int): Int @noEff = f7(x)
+}
+
+
+
+class t {
+  val f81: (() => () => Int) @refine = () => () => 1
+  def f82(): (()=> Int) @refine @infer = f81()
+  def f83(): Int @infer = f82()()
+  def v82(): Int @noEff = f83()
+}
+
+
+
+
+class t {
+  val f81: (Int => Int => Int) @refine = (x: Int) => (y: Int) => x
+  def f82(x: Int): (Int => Int) @refine @infer = f81(x)
+  def f83(x: Int): Int @infer = f82(x)(10)
+  def v82(x: Int): Int @noEff = f83(x) // f83 has no latent effect
+}
+
 
 NOTES
 =====
@@ -11,6 +41,7 @@ BUGS
 
 ====
 
+
 ====
 
 
@@ -19,31 +50,6 @@ BUGS
 TESTS
 =====
 
-def f: Int @infer = 1         // Int @noEff
-def f: Int @refine = 1        e// Int @eff
-def f: Int @infer @refine = 1 // Int @noEff
-
-def f = 1                     // Int @eff
-
-def f: Int @infer = { eff(); 1 }   // Int @eff
-
-val x = () => 1              // (Int => Int) { def apply(): Int @noEff }
-def foo() = x()              // infer @noEff
-
-val x = () => { eff(); 1 }
-def foo() = x()              // infer @eff
-
-val x: (() => Int) { def apply(): Int @noEff } = () => { eff(); 1 }  // error
-val x: (() => Int) { def apply(): Int @eff } = () => { eff(); 1 }    // ok
-
-
-val f = (x: Int) => x
-def m(x: Int) = f(x)   // @noEff
-
-
-val f = (x: Int) => (y: Int) => x + y
-def m(y: Int): (Int => Int) @refine @infer = f(y)  // (Int)(Int => Int){def apply(x$1: Int): Int @eff} @noEff
-def n(z: Int): Int @infer = m(z)(10)               // (Int)Int @eff
 
 
 val f = (x: Int) => (y: Int) => x + y
