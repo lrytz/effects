@@ -30,5 +30,16 @@ class test {
   def f83(x: Int): Int @infer = f82(x)(10)
   def v81(x: Int): ((Int => Int) { def apply(x: Int): Int @noEff } ) @noEff = f81(x) // f82 has no latent effect
   def v82(x: Int): Int @noEff = f83(x) // f83 has no latent effect
+
+  abstract class C9 { def f: Int }
+  val f9: C9 @refine = new C9 { def f: Int @infer = 1 }
+  def v9: Int @noEff = f9.f
+
+  object o10 { val f: (() => Int) { def apply(): Int @eff } = () => 1 }
+  val v10: (() => Int) { def apply(): Int @eff } = o10.f
+
+  def f111(x: Int): Int @infer = x
+  def f112: Int @infer = f111(1)
+  def v111: Int @noEff = f112
 }
 

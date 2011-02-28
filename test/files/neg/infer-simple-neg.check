@@ -43,4 +43,24 @@ infer-simple-neg.scala:28: error: effect mismatch;
  required: NoEff
   def v72(): Int @noEff = f73(10)                        // error
       ^
-9 errors found
+infer-simple-neg.scala:32: error: effect mismatch;
+ found   : Eff
+ required: NoEff
+  def v81: Int @noEff = f8.f    // error (`f8` has @eff, from constructor)
+      ^
+infer-simple-neg.scala:33: error: effect mismatch;
+ found   : Eff
+ required: NoEff
+  def v82(c: C8): Int @noEff = c.f
+      ^
+infer-simple-neg.scala:36: error: effect type mismatch;
+ found   : test.this.o9.f.type
+ required: (() => Int){def apply(): Int @scala.annotation.effects.simple.noEff}
+  val v9: (() => Int) { def apply(): Int @noEff } = o9.f
+      ^
+infer-simple-neg.scala:40: error: effect mismatch;
+ found   : Eff
+ required: NoEff
+  def v10: Int @noEff = f102
+      ^
+13 errors found

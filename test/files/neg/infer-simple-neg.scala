@@ -26,4 +26,16 @@ class test {
   def f73(z: Int): Int @infer = f72(z)(10)               // (Int)Int @eff (because of +)
   def v71(x: Int): (Int => Int) @noEff = f72(x)          // no error, f72 has no latent effect
   def v72(): Int @noEff = f73(10)                        // error
+
+  abstract class C8 { def f: Int }
+  def f8: C8 @infer @refine = new C8 { def f: Int @infer = 1 }
+  def v81: Int @noEff = f8.f    // error (`f8` has @eff, from constructor)
+  def v82(c: C8): Int @noEff = c.f
+
+  object o9 { val f: (() => Int) { def apply(): Int @eff } = () => 1 }
+  val v9: (() => Int) { def apply(): Int @noEff } = o9.f
+
+  def f101(x: Int): Int @infer = x
+  def f102: Int @refine = f101(1)
+  def v10: Int @noEff = f102
 }
