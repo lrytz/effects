@@ -1,7 +1,7 @@
 import annotation.effects._
 import simple._
 
-class test {
+class test1 {
   def f1: Int @refine = 1
   def v1: Int @noEff = f1
 
@@ -34,15 +34,17 @@ class test {
 
   object o9 { val f: (() => Int) { def apply(): Int @eff } = () => 1 }
   val v9: (() => Int) { def apply(): Int @noEff } = o9.f
+}
 
-  def f101(x: Int): Int @infer = x
-  def f102: Int @refine = f101(1)
-  def v10: Int @noEff = f102
+class test2 {
+  def f11(x: Int): Int @infer = x
+  def f12: Int @refine = f11(1)
+  def v1: Int @noEff = f12
 
-  def f111(x: Int): (() => Int) @refine = if (x < 0) () => 5 else () => {eff(); 6}
-  def f112(x: Int): (() => Int) @refine @infer = if (false) () => {eff(); 5} else () => 6
-  def f113(x: Int): (() => Int) @refine @infer = if (x < 0) () => 5 else () => 6
-  def v111: ((() => Int) { def apply(): Int @noEff }) = f111(1)
-  def v112: ((() => Int) { def apply(): Int @noEff }) @noEff = f112(1)
-  def v113: ((() => Int) { def apply(): Int @noEff }) @noEff = f113(1)
+  def f21(x: Int): (() => Int) @refine = if (x < 0) () => 5 else () => {eff(); 6}
+  def f22(x: Int): (() => Int) @refine @infer = if (false) () => {eff(); 5} else () => 6
+  def f23(x: Int): (() => Int) @refine @infer = if (x < 0) () => 5 else () => 6
+  def v21: ((() => Int) { def apply(): Int @noEff }) = f21(1)
+  def v22: ((() => Int) { def apply(): Int @noEff }) @noEff = f22(1)
+  def v23: ((() => Int) { def apply(): Int @noEff }) @noEff = f23(1)
 }

@@ -3,7 +3,6 @@ package simple
 
 import scala.tools.nsc._
 
-
 class SimpleChecker(val global: Global) extends EffectChecker[SimpleLattice] {
   import global._
 

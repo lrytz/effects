@@ -1,7 +1,7 @@
 import annotation.effects._
 import simple._
 
-class test {
+class test1 {
   def f1: Int @infer = 1
   def v11: Int @noEff = f1
   def v12: Int @eff = f1
@@ -34,12 +34,17 @@ class test {
   abstract class C9 { def f: Int }
   val f9: C9 @refine = new C9 { def f: Int @infer = 1 }
   def v9: Int @noEff = f9.f
+}
 
-  object o10 { val f: (() => Int) { def apply(): Int @eff } = () => 1 }
-  val v10: (() => Int) { def apply(): Int @eff } = o10.f
+class test2 {
+  object o1 { val f: (() => Int) { def apply(): Int @eff } = () => 1 }
+  val v1: (() => Int) { def apply(): Int @eff } = o1.f
 
-  def f111(x: Int): Int @infer = x
-  def f112: Int @infer = f111(1)
-  def v111: Int @noEff = f112
+  def f21(x: Int): Int @infer = x
+  def f22: Int @infer = f21(1)
+  def v2: Int @noEff = f22
+
+  private val f3 = () => 1
+  val v3: (() => Int) { def apply(): Int @noEff } = f3
 }
 

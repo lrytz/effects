@@ -37,7 +37,16 @@ class EffectsPlugin(val global: Global) extends Plugin {
     val phaseName = "simpleInferencer"
   }
 
-/*
+  val xioChecker = new xio.XioChecker(global)
+  val xioInferencer = new {
+    val checker = xioChecker
+  } with EffectInferencer[xio.XioLattice] {
+    val runsAfter = List("simpleChecker")
+    val phaseName = "xioInferencer"
+  }
+
+ 
+  /*
   val paramCallsChecker = new ParamCallsChecker(global)
   val paramCallsInferencer = new {
     val checker = paramCallsChecker
@@ -63,7 +72,8 @@ class EffectsPlugin(val global: Global) extends Plugin {
   /**
    * The compiler components that will be applied when running this plugin
    */
-  val components = List(simpleInferencer, simpleChecker) // List(paramCallsInferencer, paramCallsChecker, exceptionsInferencer, exceptionsChecker)
+  val components = List(simpleInferencer, simpleChecker, xioInferencer, xioChecker)
+  // List(paramCallsInferencer, paramCallsChecker, exceptionsInferencer, exceptionsChecker)
 
 }
 

@@ -54,28 +54,28 @@ infer-simple-neg.scala:33: error: latent effect mismatch;
   def v82(c: C8): Int @noEff = c.f
       ^
 infer-simple-neg.scala:36: error: effect type mismatch;
- found   : test.this.o9.f.type
+ found   : test1.this.o9.f.type
  required: (() => Int){def apply(): Int @scala.annotation.effects.simple.noEff}
   val v9: (() => Int) { def apply(): Int @noEff } = o9.f
       ^
-infer-simple-neg.scala:40: error: latent effect mismatch;
+infer-simple-neg.scala:42: error: latent effect mismatch;
  found   : Eff
  required: NoEff
-  def v10: Int @noEff = f102
+  def v1: Int @noEff = f12
       ^
-infer-simple-neg.scala:45: error: effect type mismatch;
+infer-simple-neg.scala:47: error: effect type mismatch;
  found   : (() => Int){def apply(): Int @scala.annotation.effects.simple.eff} @scala.annotation.effects.simple.eff
  required: (() => Int){def apply(): Int @scala.annotation.effects.simple.noEff} @scala.annotation.effects.simple.eff
-  def v111: ((() => Int) { def apply(): Int @noEff }) = f111(1)
+  def v21: ((() => Int) { def apply(): Int @noEff }) = f21(1)
       ^
-infer-simple-neg.scala:46: error: effect type mismatch;
+infer-simple-neg.scala:48: error: effect type mismatch;
  found   : (() => Int){def apply(): Int @scala.annotation.effects.simple.eff} @scala.annotation.effects.simple.noEff
  required: (() => Int){def apply(): Int @scala.annotation.effects.simple.noEff} @scala.annotation.effects.simple.noEff
-  def v112: ((() => Int) { def apply(): Int @noEff }) @noEff = f112(1)
+  def v22: ((() => Int) { def apply(): Int @noEff }) @noEff = f22(1)
       ^
-infer-simple-neg.scala:47: error: latent effect mismatch;
+infer-simple-neg.scala:49: error: latent effect mismatch;
  found   : Eff
  required: NoEff
-  def v113: ((() => Int) { def apply(): Int @noEff }) @noEff = f113(1)
+  def v23: ((() => Int) { def apply(): Int @noEff }) @noEff = f23(1)
       ^
 16 errors found

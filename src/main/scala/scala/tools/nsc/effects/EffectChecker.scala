@@ -389,8 +389,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
      *    seperately.
      */
     val tp2WithoutEffect = onResultType(tp2, rt => removeAnnotations(rt, annotationClasses))
-    // @TODO: should only enable annotation checking for current effect system, not for all
-    if (!annotsInferMode(tp1 <:< tp2WithoutEffect)) {
+    if (!annotationChecker.localInferMode(tp1 <:< tp2WithoutEffect)) {
       refinementError(tree, tp2, tp1)
     }
   }
@@ -750,7 +749,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   /**
    * Add an AnnotationChecker to influence `lub` and `glb` computations
    */
-  global.addAnnotationChecker(new AnnotationChecker {
+  val annotationChecker = new AnnotationChecker {
     override val inferenceOnly = true
 
     def annotationsConform(tpe1: Type, tpe2: Type) = {
@@ -758,7 +757,8 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       val eff2 = fromAnnotation(tpe2.annotations).getOrElse(lattice.top)
       lattice.lte(eff1, eff2)
     }
-  })
+  }
+  global.addAnnotationChecker(annotationChecker)
 
   /**
    * Useful for error reporting
