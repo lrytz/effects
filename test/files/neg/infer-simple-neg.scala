@@ -38,4 +38,11 @@ class test {
   def f101(x: Int): Int @infer = x
   def f102: Int @refine = f101(1)
   def v10: Int @noEff = f102
+
+  def f111(x: Int): (() => Int) @refine = if (x < 0) () => 5 else () => {eff(); 6}
+  def f112(x: Int): (() => Int) @refine @infer = if (false) () => {eff(); 5} else () => 6
+  def f113(x: Int): (() => Int) @refine @infer = if (x < 0) () => 5 else () => 6
+  def v111: ((() => Int) { def apply(): Int @noEff }) = f111(1)
+  def v112: ((() => Int) { def apply(): Int @noEff }) @noEff = f112(1)
+  def v113: ((() => Int) { def apply(): Int @noEff }) @noEff = f113(1)
 }

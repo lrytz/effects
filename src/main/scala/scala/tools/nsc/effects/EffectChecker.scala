@@ -446,7 +446,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     var result = tree
 
     def refine(): Tree = {
-      transform(result)
+      result = transform(result)
       localTyper.typed(result)
     }
 
@@ -541,6 +541,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
           case _ =>
             trace.push(tree)
             super.transform(tree)
+            trace.pop()
         }
       }
     }
@@ -769,7 +770,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * to the annotated one.
    */
   def effectError(tree: Tree, expected: Elem, found: Elem) {
-    unit.error(tree.pos, "effect mismatch;\n found   : "+ found +"\n required: "+ expected)
+    unit.error(tree.pos, "latent effect mismatch;\n found   : "+ found +"\n required: "+ expected)
   }
 
   /**

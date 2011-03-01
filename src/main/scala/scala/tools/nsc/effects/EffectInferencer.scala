@@ -106,8 +106,6 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
       // `currentClass` and `localTyper` are both variables in the TypingTransformer,
       // so when a closure references them via $outer, it will see the values at the
       // time it's executed, not the current values.
-      val transOwner = currentOwner
-      val transTyper = localTyper
       tree match {
           /*
         case DefDef(_, _, _, _, _, _) if sym.isGetter =>
@@ -119,7 +117,8 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
         case DefDef(_, _, _, _, _, _) if (sym.isGetter || sym.isSetter) =>
           ()
 
-        case dd @ DefDef(_, _, _, _, tt @ TypeTree(), rhs) =>
+        case dd @ DefDef(_, _, tparams, vparamss, tt @ TypeTree(), rhs) =>
+          val (transOwner, transTyper) = atOwner(tree.symbol)((currentOwner, localTyper))
 
           /**
            * @TODO: VERY PROBLEMATIC for multiple effect systems.
@@ -152,6 +151,9 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
           if (inferE || inferT)
             // updateInfo to lazy type is not allowed
             sym.setInfo(mkLazyType(sym => {
+              transTyper.reenterTypeParams(tparams)
+              transTyper.reenterValueParams(vparamss)
+              
               val refinedType =
                 if (inferT) computeType(sym, rhs, tp, transTyper, transOwner, unit)
                 else tp
@@ -166,6 +168,8 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
             }))
 
         case vd @ ValDef(_, _, tt @ TypeTree(), rhs) =>
+          val (transOwner, transTyper) = atOwner(tree.symbol)((currentOwner, localTyper))
+
           if (rhs.isEmpty || !inferRefinement(sym, tt.wasEmpty)) {
             val getter = sym.getter(sym.owner)
             if (getter != NoSymbol)
