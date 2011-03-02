@@ -8,7 +8,6 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
 
   val checker: EffectChecker[L]
   import checker._
-//  protected type Elem = checker.Elem
 
   val global: checker.global.type = checker.global
   import global._
@@ -36,13 +35,6 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
    * the EffectInferencer an InfoTransform, not the EffectChecker.
    */
   def transformInfo(sym: Symbol, tp: Type): Type = tp
-
-// Not needed, implemented by trait `Transform`
-//  def newPhase(prev: Phase): Phase = new StdPhase(prev) {
-//    def apply(unit: CompilationUnit) {
-//      inferTransformer(unit).transformUnit(unit)
-//    }
-//  }
 
   /**
    * When the result type does not have an effect annotation and the
@@ -94,49 +86,31 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
 
 
   /**
-   * Collect:
-   *  - DefDef when the result type does not have an effect annotation
-   *  - ValDef and DefDef, because the type might become a refinement
-   * See comm`ents in the EffectChecker.
+   * Works similar to the Namer phase of the compiler.
    */
   def newTransformer(unit: CompilationUnit) = new TypingTransformer(unit) {
     override def transform(tree: Tree): Tree = {
       val sym = tree.symbol
 
-      // `currentClass` and `localTyper` are both variables in the TypingTransformer,
-      // so when a closure references them via $outer, it will see the values at the
-      // time it's executed, not the current values.
       tree match {
-          /*
-        case DefDef(_, _, _, _, _, _) if sym.isGetter =>
-          updateEffect(sym, getterEffect(sym))
-
-        case DefDef(_, _, _, _, _, _) if sym.isSetter =>
-          updateEffect(sym, setterEffect(sym))
-*/
         case DefDef(_, _, _, _, _, _) if (sym.isGetter || sym.isSetter) =>
-          ()
+          () // they are handled in `case ValDef`
 
         case dd @ DefDef(_, _, tparams, vparamss, tt @ TypeTree(), rhs) =>
           val (transOwner, transTyper) = atOwner(tree.symbol)((currentOwner, localTyper))
+          transTyper.reenterTypeParams(tparams)
+          transTyper.reenterValueParams(vparamss)
 
           /**
-           * @TODO: VERY PROBLEMATIC for multiple effect systems.
-           *
-           * When a refinement needs to be inferred in more than one system,
-           * the already existing ones must stay!!!
+           * If "tt" was inferred there might be a wrong effect annotation.
+           *   class C { def f: Int @noEff }
+           *   def m = getC().f
+           * Typer infers type `Int @noEff` for m, which is wrong.
+           * 
+           * @TODO: is `wasEmpty` always correct?
            */
-
-          // If "tt" was inferred, then there might be a wrong effect annotation. Example:
-          //   class C { def f: Int @noEff }
-          //   def m = getC().f
-          // Typer infers type `Int @noEff` for m, which is wrong.
-
-          // @TODO: does this work with multiple systems???
-
           val hasNoE = tt.wasEmpty || fromAnnotation(sym.tpe).isEmpty
           val inferE = hasNoE && inferEffect(sym) && (!sym.isConstructor || inferConstructorEffect(sym))
-          // @TODO: is `wasEmpty` always correct, i.e. does it mean `type was inferred`?
           val inferT = !rhs.isEmpty && inferRefinement(sym, tt.wasEmpty)
 
           if (inferE)
@@ -147,13 +121,11 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
           if (inferT)
             refineType += sym
 
-          val tp = sym.tpe // updateEffect called above changes this type (adds an effect)!
+          val tp = sym.tpe // don't move this valdef before the `updateEffect` above!
           if (inferE || inferT)
             // updateInfo to lazy type is not allowed
             sym.setInfo(mkLazyType(sym => {
-              transTyper.reenterTypeParams(tparams)
-              transTyper.reenterValueParams(vparamss)
-              
+
               val refinedType =
                 if (inferT) computeType(sym, rhs, tp, transTyper, transOwner, unit)
                 else tp
@@ -169,37 +141,40 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
 
         case vd @ ValDef(_, _, tt @ TypeTree(), rhs) =>
           val (transOwner, transTyper) = atOwner(tree.symbol)((currentOwner, localTyper))
+          val getter = sym.getter(sym.owner)
+          val setter = sym.setter(sym.owner)
 
           if (rhs.isEmpty || !inferRefinement(sym, tt.wasEmpty)) {
-            val getter = sym.getter(sym.owner)
             if (getter != NoSymbol)
               updateEffect(getter, getterEffect(getter))
-            val setter = sym.setter(sym.owner)
             if (setter != NoSymbol)
               updateEffect(setter, setterEffect(setter))
           } else {
-            val tp = sym.tpe
             refineType += sym
 
+            val fieldTpe = sym.tpe
             sym.setInfo(mkLazyType(_ => {
-              sym.setInfo(computeType(sym, rhs, tp, transTyper, transOwner, unit))
+              sym.setInfo(computeType(sym, rhs, fieldTpe, transTyper, transOwner, unit))
             }))
 
-            val getter = sym.getter(sym.owner)
-            if (getter != NoSymbol)
+            if (getter != NoSymbol) {
+              val getterTpe = getter.tpe
               getter.setInfo(mkLazyType(_ => {
-                val refinedType = computeType(sym, rhs, tp, transTyper, transOwner, unit)
-                val getterType = typeWithEffect(NullaryMethodType(refinedType), getterEffect(getter))
+                val refinedType = computeType(sym, rhs, getterTpe, transTyper, transOwner, unit)
+                val getterType = typeWithEffect(refinedType, getterEffect(getter))
                 getter.setInfo(getterType)
               }))
-
-            val setter = sym.setter(sym.owner)
-            if (setter != NoSymbol)
+            }
+            
+            if (setter != NoSymbol) {
+              val setterTpe = setter.tpe
               setter.setInfo(mkLazyType(_ => {
-                val arg = setter.newSyntheticValueParam(computeType(sym, rhs, tp, transTyper, transOwner, unit))
-                val setterType = typeWithEffect(MethodType(List(arg), definitions.UnitClass.tpe), setterEffect(setter))
+                val MethodType(List(arg), res) = setterTpe
+                val newArg = setter.newSyntheticValueParam(computeType(sym, rhs, arg.tpe, transTyper, transOwner, unit))
+                val setterType = typeWithEffect(MethodType(List(newArg), res), setterEffect(setter))
                 setter.setInfo(setterType)
               }))
+            }
           }
 
         case DefDef(_, _, _, _, _, _) => abort("Unexpected DefDef: no tpt @ TypeTree()")

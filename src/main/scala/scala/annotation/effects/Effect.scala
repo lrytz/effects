@@ -17,6 +17,11 @@ package effects
  * type `Int @eff`. In some sense, this would be more systematic: in a
  * DefDef, the type of the method (e.g. `(Int)Int @eff`) would match the
  * type of the rhs (`Int @eff`).
+ * 
+ * LATER: probably not keep latent effect in trees:
+ *   - deleting and re-typing will remove that information
+ *   - it heavily conflicts with the way TypeConstraints work! if we select a Symbol with @noEff, the latent
+ *     effect can still be @eff. But the typer will assing a type with @noEff
  *
  *
  * Another problem: given "class C { def f: Int @noEff = 1 }". In
