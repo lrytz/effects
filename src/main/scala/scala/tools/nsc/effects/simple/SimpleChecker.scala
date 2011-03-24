@@ -1,9 +1,10 @@
 package scala.tools.nsc.effects
 package simple
 
+import pc._
 import scala.tools.nsc._
 
-class SimpleChecker(val global: Global) extends EffectChecker[SimpleLattice] {
+class SimpleChecker(val global: Global) extends EffectChecker[SimpleLattice] with PCTracking[SimpleLattice] {
   import global._
 
   val runsAfter = List("simpleInferencer")

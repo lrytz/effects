@@ -29,11 +29,19 @@ class EffectsPlugin(val global: Global) extends Plugin {
     super.processOptions(rest.toList, error)
   }
 
+  val pcChecker = new pc.PCChecker(global)
+  val pcInferencer = new {
+    val checker = pcChecker
+  } with EffectInferencer[pc.PCLattice] {
+    val runsAfter = List("superaccessors")
+    val phaseName = "pcInferencer"
+  }
+
   val simpleChecker = new simple.SimpleChecker(global)
   val simpleInferencer = new {
     val checker = simpleChecker
   } with EffectInferencer[simple.SimpleLattice] {
-    val runsAfter = List("superaccessors")
+    val runsAfter = List("pcChecker")
     val phaseName = "simpleInferencer"
   }
 
@@ -45,6 +53,13 @@ class EffectsPlugin(val global: Global) extends Plugin {
     val phaseName = "xioInferencer"
   }
 
+  val exceptionsChecker = new exceptions.ExceptionsChecker(global)
+  val exceptionsInferencer = new {
+    val checker = exceptionsChecker
+  } with EffectInferencer[exceptions.ExceptionsLattice] {
+    val runsAfter = List("simpleChecker")
+    val phaseName = "exceptionsInferencer"
+  }
  
   /*
   val paramCallsChecker = new ParamCallsChecker(global)
@@ -72,7 +87,7 @@ class EffectsPlugin(val global: Global) extends Plugin {
   /**
    * The compiler components that will be applied when running this plugin
    */
-  val components = List(simpleInferencer, simpleChecker, xioInferencer, xioChecker)
+  val components = List(pcInferencer, pcChecker, simpleInferencer, simpleChecker /*, exceptionsInferencer, exceptionsChecker */ /* , xioInferencer, xioChecker */)
   // List(paramCallsInferencer, paramCallsChecker, exceptionsInferencer, exceptionsChecker)
 
 }

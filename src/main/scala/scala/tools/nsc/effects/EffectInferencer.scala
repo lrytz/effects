@@ -123,8 +123,7 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
 
           val tp = sym.tpe // don't move this valdef before the `updateEffect` above!
           if (inferE || inferT)
-            // updateInfo to lazy type is not allowed
-            sym.setInfo(mkLazyType(sym => {
+            sym.updateInfo(mkLazyType(sym => {
 
               val refinedType =
                 if (inferT) computeType(sym, rhs, tp, transTyper, transOwner, unit)
@@ -134,9 +133,8 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
                 if (inferE) typeWithEffect(refinedType, computeEffect(sym, rhs, transTyper, transOwner, unit))
                 else refinedType
 
-              // setInfo so that the lazy type doesn't remain in type history. otherwise
-              // it can be called again in a later run, which is problematic / wrong.
-              sym.setInfo(annotType)
+              // updateInfo removes the lazy type from the type history
+              sym.updateInfo(annotType)
             }))
 
         case vd @ ValDef(_, _, tt @ TypeTree(), rhs) =>
@@ -153,26 +151,26 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
             refineType += sym
 
             val fieldTpe = sym.tpe
-            sym.setInfo(mkLazyType(_ => {
-              sym.setInfo(computeType(sym, rhs, fieldTpe, transTyper, transOwner, unit))
+            sym.updateInfo(mkLazyType(_ => {
+              sym.updateInfo(computeType(sym, rhs, fieldTpe, transTyper, transOwner, unit))
             }))
 
             if (getter != NoSymbol) {
               val getterTpe = getter.tpe
-              getter.setInfo(mkLazyType(_ => {
+              getter.updateInfo(mkLazyType(_ => {
                 val refinedType = computeType(sym, rhs, getterTpe, transTyper, transOwner, unit)
                 val getterType = typeWithEffect(refinedType, getterEffect(getter))
-                getter.setInfo(getterType)
+                getter.updateInfo(getterType)
               }))
             }
             
             if (setter != NoSymbol) {
               val setterTpe = setter.tpe
-              setter.setInfo(mkLazyType(_ => {
+              setter.updateInfo(mkLazyType(_ => {
                 val MethodType(List(arg), res) = setterTpe
                 val newArg = setter.newSyntheticValueParam(computeType(sym, rhs, arg.tpe, transTyper, transOwner, unit))
                 val setterType = typeWithEffect(MethodType(List(newArg), res), setterEffect(setter))
-                setter.setInfo(setterType)
+                setter.updateInfo(setterType)
               }))
             }
           }

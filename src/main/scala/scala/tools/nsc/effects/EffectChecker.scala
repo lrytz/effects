@@ -8,7 +8,7 @@ import collection.{ mutable => m }
 abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with Transform with TypingTransformers {
   // abstract val global: Global
   import global._
-  import analyzer.Typer
+  import analyzer.{Typer, Context}
 
   // abstract runsAfter: List[String]
   // abstract phaseName: String
@@ -670,12 +670,13 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    */
   def computeEffect(sym: Symbol, tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit) = {
     val refinedTree = transformed.getOrElseUpdate(sym, refine(tree, typer, owner, unit))
-    newEffectTraverser(refinedTree).compute()
+    newEffectTraverser(refinedTree, typer, owner, unit).compute()
   }
 
-  def newEffectTraverser(tree: Tree): EffectTraverser = new EffectTraverser(tree)
+  def newEffectTraverser(tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit): EffectTraverser =
+    new EffectTraverser(tree, typer, owner, unit)
 
-  class EffectTraverser(tree: Tree) extends Traverser {
+  class EffectTraverser(tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit) extends Traverser {
     override def apply[T <: Tree](t: T): T = abort("apply should not be called")
 
     def compute(): Elem = {
@@ -693,6 +694,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
         case ModuleDef(_, _, _) => ()
         case DefDef(_, _, _, _, _, _) => ()
         case ValDef(_, _, _, _) if tree.symbol.isLazy => ()
+        case TypeDef(_, _, _, _) => ()
         case Function(_, _) => ()
 
         /**
@@ -752,11 +754,32 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     }
 
     protected def computeApplicationEffect(fun: Tree, targs: List[Tree] = Nil, argss: List[List[Tree]] = Nil) = {
-      val sym = fun.symbol
-      val eff = fromAnnotation(sym.tpe) // will complete lazy type if necessary
-      // println("effect of applying "+ sym +": "+ eff)
-      eff.getOrElse(lattice.top) // @TODO: top by default?
+      var res = applicationEffect(fun, targs, argss, typer.context1)
+      for (t <- appEffectTransformers) {
+        val trans = t(res, fun, targs, argss, typer.context1)
+        res = trans // t(res, fun, targs, argss, typer.context1)
+      }
+      res
     }
+  }
+
+ /**
+  * PCTracking adapts the effect of an application expression.
+  */
+  def addAppEffectTransformer(f: (Elem, Tree, List[Tree], List[List[Tree]], Context) => Elem) {
+    appEffectTransformers += f
+  }
+  private val appEffectTransformers = m.ListBuffer[(Elem, Tree, List[Tree], List[List[Tree]], Context) => Elem]()
+
+  /**
+   * Compute the effect of a function application. This method exists outside the
+   * EffectTraverser so that it can be easily overridden by concrete checkers.
+   */
+  def applicationEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context)  = {
+    val sym = fun.symbol
+    val eff = fromAnnotation(sym.tpe) // will complete lazy type if necessary
+    // println("effect of applying "+ sym +": "+ eff)
+    eff.getOrElse(lattice.top) // @TODO: top by default?
   }
 
   /*
