@@ -281,12 +281,16 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     override def transform(tree: Tree): Tree = {
       tree match {
         case dd@DefDef(_, _, _, _, _, rhs) if !rhs.isEmpty =>
-          val td = super.transform(dd).asInstanceOf[DefDef]
-          checkDefDef(td, localTyper, currentOwner, unit)
+          val td = super.transform(dd).asInstanceOf[DefDef] // @TODO: doc why this needs to be done first. why?
+          atOwner(td.symbol) {
+            checkDefDef(td, localTyper, currentOwner, unit)
+          }
 
         case vd@ValDef(_, _, _, rhs) if !rhs.isEmpty =>
           val td = super.transform(vd).asInstanceOf[ValDef]
-          checkValDef(td, localTyper, currentOwner, unit)
+          atOwner(td.symbol) {
+            checkValDef(td, localTyper, currentOwner, unit)
+          }
 
         case _ =>
           super.transform(tree)
@@ -344,7 +348,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       val overriddenEffect = fromAnnotation(os.tpe).getOrElse(lattice.top)
       if (!lattice.lte(symEff, overriddenEffect))
         overrideError(dd, os, overriddenEffect, symEff)
-      checkRefinement(dd, os.tpe.finalResultType, symTp)
+      checkRefinement(dd, symTp, os.tpe.finalResultType)
     }
 
     treeCopy.DefDef(dd, dd.mods, dd.name, dd.tparams, dd.vparamss, dd.tpt, refinedRhs)
@@ -402,7 +406,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       }
 
     for (os <- sym.allOverriddenSymbols) {
-      checkRefinement(vd, os.tpe, symTp)
+      checkRefinement(vd, symTp, os.tpe)
     }
 
     treeCopy.ValDef(vd, vd.mods, vd.name, vd.tpt, refinedRhs)
@@ -478,11 +482,14 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     localTyper = typer
     currentOwner = owner
 
-    var result = tree
+    // var result = tree
 
     def refine(): Tree = {
-      result = transform(result)
-      val res = localTyper.typed(result)
+      // result = transform(result)
+      val refined = transform(tree)
+      val untyped = new ResetTransformer(untypeTargets).reset(refined)
+
+      val res = localTyper.typed(untyped)
       /**
        * Effect annotations on the trees make no sense:
        *   def foo(x: Int): Int @noEff = x
@@ -498,9 +505,10 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       res
     }
 
+    protected val untypeTargets: m.Set[(Tree, Boolean)] = new m.HashSet()
+
     protected def untypeTo(stop: Tree, untypeStop: Boolean = false) {
-      // transformer because it might remove some "TypeApply" nodes
-      result = new ResetTransformer(stop, untypeStop).transform(result)
+      untypeTargets += ((stop, untypeStop))
     }
 
     protected def untypeIfRefined(tree: Tree): Tree = {
@@ -508,7 +516,12 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       // for fields, the symbol of Select is the getter, while refineType contains the field
       if (refineType(sym) || (sym.isGetter && refineType(sym.accessed))) {
         untypeTo(tree, true)
+      } else if (atPhase(currentRun.typerPhase)(sym.tpe) != sym.tpe) {
+        // symbols from a previous run might have a non-refined function type at typer, but
+        // a refined one at the current phase. @TODO: need nicer way to handle this!
+        untypeTo(tree, true)
       }
+
       tree
     }
 
@@ -565,11 +578,21 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
 
     /**
      * A Transformer that removes types and symbols on the path to the tree `stop`.
+     *
+     * Transformer because it might remove some "TypeApply" nodes.
      */
-    private class ResetTransformer(stop: Tree, untypeStop: Boolean) extends Transformer {
+    private class ResetTransformer(stops: m.Set[(Tree, Boolean)]) extends Transformer {
+      private val toUntype: m.Set[Tree] = new m.HashSet()
       private val trace: m.Stack[Tree] = new m.Stack()
 
-      private def reset(tree: Tree) {
+      def reset(tree: Tree) = {
+        val res = transform(tree)
+        for (t <- toUntype)
+          untype(t)
+        res
+      }
+      
+      private def untype(tree: Tree) {
         if (tree.hasSymbol) tree.symbol = NoSymbol
         tree match {
           case EmptyTree => // tpe_= throws an exception
@@ -584,18 +607,20 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       private def synteticTargs(targs: List[Tree]) = false // @TODO (find out if targs were inferred)
 
       override def transform(tree: Tree): Tree = {
-        if (tree == stop) {
-          if (untypeStop) trace.push(tree)
-          for (t <- trace)
-            reset(t)
-          tree
-        } else tree match {
-          case TypeApply(fun, targs) if synteticTargs(targs) =>
-            super.transform(fun)
-          case _ =>
-            trace.push(tree)
-            super.transform(tree)
-            trace.pop()
+        stops.find(p => p._1 == tree) match {
+          case Some((_, untypeStop)) =>
+            if (untypeStop) trace.push(tree)
+            toUntype ++= trace
+            tree
+          case _ => tree match {
+            case TypeApply(fun, targs) if synteticTargs(targs) =>
+              super.transform(fun)
+            case _ =>
+              trace.push(tree)
+              val t = super.transform(tree)
+              trace.pop()
+              t
+          }
         }
       }
     }
@@ -724,6 +749,11 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
           if (tree.symbol.isMethod)
             add(computeApplicationEffect(tree))
 
+        // @TODO: correctly treat pattern matches. E.g. in "case C(a, b)", the case has the form
+        //   CaseDef(Apply(TypeTree(), args), _, _)
+        // with TypeTree().tpe = MethodType(List(a,b), C)
+        case CaseDef(_, _, _) => ()
+
         case _ =>
           super.traverse(tree)
       }
@@ -750,6 +780,8 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       tree match {
         case Select(qual, _) => traverse(qual)
         case Ident(_) => ()
+        case t =>
+          throw new MatchError(t)
       }
     }
 

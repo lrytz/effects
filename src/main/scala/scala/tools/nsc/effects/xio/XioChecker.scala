@@ -22,12 +22,12 @@ class XioChecker(val global: Global) extends EffectChecker[XioLattice] {
   val annotationClasses = List(xioClass, noXioClass)
 
   def fromAnnotation(annots: List[AnnotationInfo]) = {
-    val pureAnnot = annots.filter(_.atp.typeSymbol == pureAnnotation).headOption
-    pureAnnot.map(_ => NoXio) orElse {
-      val xioAnnot = annots.filter(_.atp.typeSymbol == xioClass).headOption
-      xioAnnot.map(_ => Xio) orElse {
-        val noXioAnnot = annots.filter(_.atp.typeSymbol == noXioClass).headOption
-        noXioAnnot.map(_ => NoXio)
+    val xioAnnot = annots.filter(_.atp.typeSymbol == xioClass).headOption
+    xioAnnot.map(_ => Xio) orElse {
+      val noXioAnnot = annots.filter(_.atp.typeSymbol == noXioClass).headOption
+      noXioAnnot.map(_ => NoXio) orElse {
+        val pureAnnot = annots.filter(_.atp.typeSymbol == pureAnnotation).headOption
+        pureAnnot.map(_ => NoXio)
       }
     }
   }

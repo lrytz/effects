@@ -50,14 +50,15 @@ abstract class PCCommons {
   }
   
   def pcFromAnnotations(annots: List[AnnotationInfo]): Option[Elem] = {
-    val pureAnnotation = definitions.getClass("scala.annotation.effects.pure")
-    val pureAnnot = annots.filter(_.atp.typeSymbol == pureAnnotation).headOption
-    pureAnnot.map(_ => pcLattice.bottom) orElse {
-      val anyPcAnnot = annots.filter(_.atp.typeSymbol == anyPcClass).headOption
-      anyPcAnnot.map(_ => AnyPC) orElse {
-        val pcAnnots = annots.filter(_.atp.typeSymbol == pcClass)
-        if (pcAnnots.isEmpty) None
-        else Some(pcLattice.join(pcAnnots.map(pcFromAnnot): _*))
+    val anyPcAnnot = annots.filter(_.atp.typeSymbol == anyPcClass).headOption
+    anyPcAnnot.map(_ => AnyPC) orElse {
+      val pcAnnots = annots.filter(_.atp.typeSymbol == pcClass)
+      if (pcAnnots.isEmpty) {
+        val pureAnnotation = definitions.getClass("scala.annotation.effects.pure")
+        val pureAnnot = annots.filter(_.atp.typeSymbol == pureAnnotation).headOption
+        pureAnnot.map(_ => pcLattice.bottom)
+      } else {
+        Some(pcLattice.join(pcAnnots.map(pcFromAnnot): _*))
       }
     }
   }

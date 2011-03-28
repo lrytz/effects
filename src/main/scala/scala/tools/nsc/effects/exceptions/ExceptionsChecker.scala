@@ -29,16 +29,19 @@ class ExceptionsChecker(val global: Global) extends EffectChecker[ExceptionsLatt
       case tp =>
         List(tp)
     }
-    
-    val pureAnnot = annots.filter(_.atp.typeSymbol == pureAnnotation).headOption
-    pureAnnot.map(_ => lattice.bottom) orElse {
-      val throwsAnn = annots.filter(_.atp.typeSymbol == throwsClass)
-      if (!throwsAnn.isEmpty) {
-        Some(((Nil: Elem) /: throwsAnn)((elem, annot) => {
-          val TypeRef(_, _, List(arg)) = annot.atp
-          lattice.join(elem, exceptionsOf(arg))
-        }))
-      } else None /* {
+
+    val throwsAnn = annots.filter(_.atp.typeSymbol == throwsClass)
+    if (!throwsAnn.isEmpty) {
+      Some(((Nil: Elem) /: throwsAnn)((elem, annot) => {
+        val TypeRef(_, _, List(arg)) = annot.atp
+        lattice.join(elem, exceptionsOf(arg))
+      }))
+    } else {
+      val pureAnnot = annots.filter(_.atp.typeSymbol == pureAnnotation).headOption
+      pureAnnot.map(_ => lattice.bottom)
+    }
+
+    /* {
       val scalaThrowsAnn = annots.filter(_.atp.typeSymbol == scalaThrowsClass)
       if (scalaThrowsAnn.isEmpty) None
       else Some(((Nil: Elem) /: scalaThrowsAnn)((elem, annot) =>
@@ -50,7 +53,6 @@ class ExceptionsChecker(val global: Global) extends EffectChecker[ExceptionsLatt
         }
       ))
     }*/
-    }
   }
 
   def toAnnotation(elem: Elem): AnnotationInfo = {

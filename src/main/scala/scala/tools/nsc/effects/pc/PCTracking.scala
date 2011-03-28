@@ -38,23 +38,35 @@ trait PCTracking[L <: CompleteLattice] { this: EffectChecker[L] =>
 
     val annots = fun.symbol.tpe.finalResultType.annotations
     pcFromAnnotations(annots) match {
-      case None => res = lattice.join(res, anyParamCall(flatArgss))
-      case Some(AnyPC) => res = lattice.join(res, anyParamCall(flatArgss))
+      case None | Some(AnyPC) =>
+        res = lattice.join(res, anyParamCall(flatArgss, ctx))
       case Some(PC(calls)) =>
         for (PCInfo(param, pcfun, pcargtpss) <- calls) {
           val i = flatParamss.indexOf(param)
           assert(i >= 0)
-          val arg = flatArgss(i)
-          // @TODO: overloads.. there should be a more symbolic way to do this. asSeenFrom?
-          val sym = arg.tpe.member(pcfun.name)
-          res = lattice.join(e, fromAnnotation(sym.tpe).getOrElse(lattice.top))
+          flatArgss(i) match {
+            case id @ Ident(_) if (isParam(id.symbol, ctx.owner.enclMethod)) =>
+              ()
+            case arg =>
+              // @TODO: overloads.. there should be a more symbolic way to do this. asSeenFrom?
+              val sym = arg.tpe.member(pcfun.name)
+              res = lattice.join(e, fromAnnotation(sym.tpe).getOrElse(lattice.top))
+          }
         }
     }
     res
   })
 
   // @TODO: effect of calling all methods on all types of `args`
-  def anyParamCall(args: List[Tree]): Elem = lattice.top
+  def anyParamCall(args: List[Tree], ctx: Context): Elem =
+    (lattice.bottom /: args)((res, arg) => {
+      arg match {
+        case id @ Ident(_) if (isParam(id.symbol, ctx.owner.enclMethod)) =>
+          res
+        case _ =>
+          lattice.top
+      }
+    })
 
 
   /**
@@ -62,11 +74,8 @@ trait PCTracking[L <: CompleteLattice] { this: EffectChecker[L] =>
    */
   addAppEffectTransformer((e: Elem, fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context) => {
     fun match {
-      case Select(id @ Ident(_), _) =>
-        if (isParam(id.symbol, ctx.owner.enclMethod))
-          lattice.bottom
-        else
-          e
+      case Select(id @ Ident(_), _) if (isParam(id.symbol, ctx.owner.enclMethod)) =>
+        lattice.bottom
 
       case _ =>
         e
