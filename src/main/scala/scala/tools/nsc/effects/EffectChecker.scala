@@ -352,41 +352,6 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     }
 
     treeCopy.DefDef(dd, dd.mods, dd.name, dd.tparams, dd.vparamss, dd.tpt, refinedRhs)
-
-    /*    val rhsEffOpt =
-      if (inferEffect contains sym) None
-      else Some(rhsEffect.getOrElseUpdate(sym, computeEffect(dd.rhs)))
-
-    for (rhsEff <- rhsEffOpt) {
-      if (!lattice.lte(rhsEff, symEff))
-        effectError(dd, symEff, rhsEff)
-    }
-
-    // Check or infer the return type
-    if (!sym.isConstructor) {
-      val symTp = typeOf(sym).finalResultType
-      val rhsTpOpt =
-        if (dd.rhs.isEmpty || refinedSymbols(sym)) None
-        else {
-          rhsEffect.getOrElseUpdate(sym, computeEffect(dd.rhs))
-          Some(dd.rhs.tpe)
-        }
-
-      for (rhsTp <- rhsTpOpt) {
-        // @TODO: what about type parameters and finalResultType???
-        //  def f[T](x: T): T = x
-        checkRefinement(dd, rhsTp, symTp)
-      }
-
-      // check the latent effect and return type for all overridden methods
-      for (os <- sym.allOverriddenSymbols) {
-        // @TODO: lattice.top when overridden does not have an effect annotation?
-        val overriddenEffect = effectOf(os).getOrElse(lattice.top)
-        if (!lattice.lte(symEff, overriddenEffect))
-          overrideError(dd, os, overriddenEffect, symEff)
-        checkRefinement(dd, typeOf(os).finalResultType, symTp)
-      }
-    } */
   }
 
   def checkValDef(vd: ValDef, typer: Typer, owner: Symbol, unit: CompilationUnit): ValDef = {
@@ -410,23 +375,6 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     }
 
     treeCopy.ValDef(vd, vd.mods, vd.name, vd.tpt, refinedRhs)
-
-    /*
-    val rhsTpOpt =
-      if (vd.rhs.isEmpty || refinedSymbols(sym)) None
-      else {
-        rhsEffect.getOrElseUpdate(sym, computeEffect(vd.rhs))
-        Some(vd.rhs.tpe)
-      }
-
-    for (rhsTp <- rhsTpOpt) {
-      checkRefinement(vd, rhsTp, symTp)
-    }
-
-    for (os <- sym.allOverriddenSymbols) {
-      checkRefinement(vd, typeOf(os), symTp)
-    }
-*/
   }
 
   def checkRefinement(tree: Tree, tp1: Type, tp2: Type) {
@@ -482,10 +430,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     localTyper = typer
     currentOwner = owner
 
-    // var result = tree
-
     def refine(): Tree = {
-      // result = transform(result)
       val refined = transform(tree)
       val untyped = new ResetTransformer(untypeTargets).reset(refined)
 
@@ -593,7 +538,24 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       }
       
       private def untype(tree: Tree) {
-        if (tree.hasSymbol) tree.symbol = NoSymbol
+
+        /**
+         * For Select, if the selected symbol is a method, we need to erase it,
+         * re-typechecking might assign a different symbol, namely when there's
+         * a refinement inferred. Example
+         *
+         *   val a: (() => Int) @refine = () => Int
+         *   def f = a.apply()
+         *
+         * Initially, we get the symbol "Function0.apply", which has all effect.
+         * However, the type of "a" is refined, and re-typechecking gives the
+         * symbol "<refinement>.apply", which has no effect.
+         */
+        tree match {
+          case Select(_, _) if tree.symbol.isMethod => tree.symbol = NoSymbol
+          case _ => ()
+        }
+
         tree match {
           case EmptyTree => // tpe_= throws an exception
             ()
@@ -627,62 +589,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
 
   }
 
-  /*
-  def maybeInferType(sym: Symbol) {
-    // @TODO: un-copy-paste from Namers.scala
 
-    // EVEN BETTER: call "typedValDef" instead of re-doing part of the work
-
-    def widenIfNecessary(sym: Symbol, tpe: Type, pt: Type): Type = {
-      val getter =
-        if (sym.isValue && sym.owner.isClass && sym.isPrivate)
-          sym.getter(sym.owner)
-        else sym
-      def isHidden(tp: Type): Boolean = tp match {
-        case SingleType(pre, sym) =>
-          (sym isLessAccessibleThan getter) || isHidden(pre)
-        case ThisType(sym) =>
-          sym isLessAccessibleThan getter
-        case p: SimpleTypeProxy =>
-          isHidden(p.underlying)
-        case _ =>
-          false
-      }
-      val tpe1 = tpe.deconst
-      val tpe2 = tpe1.widen
-      if ((sym.isVariable || sym.isMethod && !sym.hasAccessorFlag))
-        if (tpe2 <:< pt) tpe2 else tpe1
-      else if (isHidden(tpe)) tpe2
-      else if (sym.isFinal || sym.isLocal) tpe
-      else tpe1
-    }
-
-    if (refineType contains sym) {
-      val newTpe = {
-        val rhs = refineType(sym) match {
-          case DefDef(_, _, _, _, _, rhs) => rhs
-          case ValDef(_, _, _, rhs) => rhs
-        }
-        rhsEffect.getOrElseUpdate(sym, computeEffect(rhs))
-        typer.packedType(rhs, sym.owner)
-      }
-      updateResultType(sym, widenIfNecessary(sym, newTpe, typeOf(sym).finalResultType))
-      refineType.remove(sym)
-      refinedSymbols += sym
-    }
-  }
-*/
-
-  /**
-   * Returns the type of `sym` by applying effect type
-   * inference before when necessary.
-   */
-  /*
-  def typeOf(sym: Symbol): Type = {
-    maybeInferType(sym)
-    sym.tpe
-  }
-*/
 
   /**
    * *******************
@@ -814,25 +721,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     eff.getOrElse(lattice.top) // @TODO: top by default?
   }
 
-  /*
-  def maybeInferEffect(method: Symbol) {
-    if (inferEffect.contains(method) && fromAnnotation(method.tpe).isEmpty) {
-      val rhs = inferEffect(method).rhs
-      updateEffect(method, rhsEffect.getOrElseUpdate(method, computeEffect(rhs)))
-    }
-  }
-*/
 
-  /**
-   * Returns the latent effect of `method` by applying
-   * effect inference before when necessary.
-   */
-  /*
-  def effectOf(method: Symbol): Option[Elem] = {
-    maybeInferEffect(method)
-    fromAnnotation(method.tpe)
-  }
-*/
 
   /**
    * *************

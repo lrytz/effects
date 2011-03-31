@@ -42,15 +42,23 @@ trait PCTracking[L <: CompleteLattice] { this: EffectChecker[L] =>
         res = lattice.join(res, anyParamCall(flatArgss, ctx))
       case Some(PC(calls)) =>
         for (PCInfo(param, pcfun, pcargtpss) <- calls) {
-          val i = flatParamss.indexOf(param)
-          assert(i >= 0)
-          flatArgss(i) match {
-            case id @ Ident(_) if (isParam(id.symbol, ctx.owner.enclMethod)) =>
-              ()
-            case arg =>
-              // @TODO: overloads.. there should be a more symbolic way to do this. asSeenFrom?
-              val sym = arg.tpe.member(pcfun.name)
-              res = lattice.join(e, fromAnnotation(sym.tpe).getOrElse(lattice.top))
+          if (isParam(param, ctx.owner.enclMethod)) {
+            // the receiver of the paramCall is a parameter in the current context. then we don't
+            // need to consider its effect. example
+            //   def m(a: A) { def n() = a.f(); n() }
+            // in the call to n(), there's a @pc(a.f()), but "a" is a param when calling n.
+            ()
+          } else {
+            val i = flatParamss.indexOf(param)
+            assert(i >= 0)
+            flatArgss(i) match {
+              case id @ Ident(_) if (isParam(id.symbol, ctx.owner.enclMethod)) =>
+                ()
+              case arg =>
+                // @TODO: overloads.. there should be a more symbolic way to do this. asSeenFrom?
+                val sym = arg.tpe.member(pcfun.name)
+                res = lattice.join(e, fromAnnotation(sym.tpe).getOrElse(lattice.top))
+            }
           }
         }
     }
