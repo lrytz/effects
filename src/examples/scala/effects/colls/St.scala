@@ -8,7 +8,7 @@ class AddBldr[Elem, To <: Addable[Elem, To] with Itrbl[Elem] with ItrblLk[Elem, 
   protected var elems: To = empty
   def +=(x: Elem): this.type = { elems = elems + x; this }
   def clear() { elems = empty }
-  def result: To = elems
+  def result(): To = elems
 }
 
 
