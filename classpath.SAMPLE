@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<classpath>
+	<classpathentry kind="src" path="src/main/scala"/>
+	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>
+	<classpathentry kind="lib" path="lib/scala/lib/scala-compiler.jar" sourcepath="/Users/luc/scala/git/src/compiler"/>
+	<classpathentry kind="lib" path="lib/scala/lib/scala-library.jar" sourcepath="/Users/luc/scala/git/src/library"/>
+	<classpathentry kind="output" path="bin"/>
+</classpath>
