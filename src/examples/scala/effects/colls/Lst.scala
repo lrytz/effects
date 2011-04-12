@@ -33,7 +33,7 @@ trait TravLk[+A, +Repr] { self: Repr =>
       if (i >= n) b += x
       i += 1
     }
-    b.result
+    b.result()
   }
 
   def head: A = {
@@ -53,13 +53,13 @@ trait TravLk[+A, +Repr] { self: Repr =>
     val b = newBuilder
     for (x <- this)
       if (p(x)) b += x
-    b.result
+    b.result()
   }
 
   def map[B, That](f: A => B)(implicit bf: CBF[Repr, B, That]): That = {
     val b = bf(self.asInstanceOf[Repr]) // @TODO: cast due to intellij bug (youtrack.jetbrains.net/issue/SCL-2480)
     for (x <- this) b += f(x)
-    b.result
+    b.result()
   }
 }
 
@@ -74,7 +74,7 @@ trait GenTravTmpl[+A, +CC[X] <: Trav[X]] {
 abstract class GenCpn[+CC[X] <: Trav[X]] {
   type Coll = CC[_]
   def newBuilder[A]: Bldr[A, CC[A]]
-  def empty[A]: CC[A] = newBuilder[A].result
+  def empty[A]: CC[A] = newBuilder[A].result()
 }
 
 abstract class TravFct[CC[X] <: Trav[X] with GenTravTmpl[X, CC]] extends GenCpn[CC] {
@@ -135,10 +135,10 @@ trait SqLk[+A, +Repr <: SqLk[A, Repr]] extends ItrblLk[A, Repr] { self: Repr =>
   def iterator: Itor[A] = new Itor[A] {
     var these = self
     def hasNext: Boolean = !these.isEmpty
-    def next: A =
+    def next(): A =
       if (hasNext) {
         val result = these.head; these = these.tail; result
-      } else Itor.empty.next
+      } else Itor.empty.next()
   }
 }
 
@@ -173,7 +173,7 @@ case object nl extends Lst[Nothing] {
 class LstBldr[A] extends Bldr[A, Lst[A]] {
   val b = new collection.mutable.ListBuffer[A]()
   def +=(a: A) = { b += a; this }
-  def result: Lst[A] = Lst(b: _*)
+  def result(): Lst[A] = Lst(b: _*)
 }
 
 object Lst extends SqFct[Lst] {
@@ -183,5 +183,3 @@ object Lst extends SqFct[Lst] {
   def newBuilder[A]: Bldr[A, Lst[A]] = new LstBldr[A]
   override def empty[A]: Lst[A] = nl
 }
-
-
