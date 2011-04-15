@@ -62,6 +62,16 @@ class throws[E <: Throwable] extends Effect
 object throws { def apply[E <: Throwable] = new throws[E] }
 
 
+/**
+ * JPure
+ */
+class local extends Effect // for fields
+
+class fresh extends Effect
+class nonFresh extends Effect
+
+class mod(locs: Any*) extends Effect
+class modAll extends Effect
 
 object Main {
   // some exceptions
