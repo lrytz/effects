@@ -15,33 +15,34 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] {
   val lattice = new StateLattice {
     val global: StateChecker.this.global.type = StateChecker.this.global
   }
-  import lattice.{Mod, ModAll, Fresh, NonFresh}
+  import lattice.{Mod, ModAll, Loc, NonLoc}
 
-  val freshClass = definitions.getClass("scala.annotation.effects.state.fresh")
   val modClass = definitions.getClass("scala.annotation.effects.state.mod")
   val modAllClass = definitions.getClass("scala.annotation.effects.state.modAll")
+  val locClass = definitions.getClass("scala.annotation.effects.state.loc")
+  val nonLocClass = definitions.getClass("scala.annotation.effects.state.nonLoc")
   val localClass = definitions.getClass("scala.annotation.effects.state.local")
 
-  val annotationClasses = List(freshClass, modClass, modAllClass)
+  val annotationClasses = List(modClass, modAllClass, locClass, nonLocClass)
 
   def fromAnnotation(annots: List[AnnotationInfo]): Option[Elem] = {
-    val freshAnn = annots.filter(_.atp.typeSymbol == freshClass).headOption
-    freshAnn.map(_ => (Mod(), Fresh)) orElse {
+    val locAnn = annots.filter(_.atp.typeSymbol == locClass).headOption
+    locAnn.map(m => (Mod(), Loc(m.args.map(_.symbol).toSet))) orElse {
       val modAllAnn = annots.filter(_.atp.typeSymbol == modAllClass).headOption
-      modAllAnn.map(_ => (ModAll, NonFresh)) orElse {
+      modAllAnn.map(_ => (ModAll, NonLoc)) orElse {
         val modAnn = annots.filter(_.atp.typeSymbol == modClass).headOption
         modAnn.map(m => {
-          (Mod(m.args.map(_.symbol).toSet), NonFresh)
+          (Mod(m.args.map(_.symbol).toSet), NonLoc)
         }) orElse {
           val pureAnn = annots.filter(_.atp.typeSymbol == pureAnnotation).headOption
-          pureAnn.map(_ => (Mod(), NonFresh))
+          pureAnn.map(_ => (Mod(), NonLoc))
         }
       }
     }
   }
 
   def toAnnotation(elem: Elem): AnnotationInfo = elem match {
-    case (_, Fresh) => AnnotationInfo(freshClass.tpe, Nil, Nil)
+    case (_, Loc(locations)) => AnnotationInfo(locClass.tpe, locations.toList.map(Ident(_)), Nil)
     case (Mod(locations), _) => AnnotationInfo(modClass.tpe, locations.toList.map(Ident(_)), Nil)
     case (ModAll, _) => AnnotationInfo(modAllClass.tpe, Nil, Nil)
   }

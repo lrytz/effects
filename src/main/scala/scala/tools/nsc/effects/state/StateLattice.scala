@@ -8,17 +8,17 @@ abstract class StateLattice extends CompleteLattice {
   val global: Global
   import global._
 
-  type Elem = (State, Freshness)
+  type Elem = (State, Locality)
 
-  val bottom = (Mod(), Fresh) // @TODO: maybe Mod(Set()) ?? since this is the value we use for @pure ??
-  val top = (ModAll, NonFresh)
+  val bottom = (Mod(), Loc()) // @TODO: maybe Mod(Set()) ?? since this is the value we use for @pure ??
+  val top = (ModAll, NonLoc)
 
   def join(a: Elem, b: Elem) =
-    (joinState(a._1, b._1), joinFreshness(a._2, b._2))
+    (joinState(a._1, b._1), joinLocality(a._2, b._2))
 
-  def joinFreshness(a: Freshness, b: Freshness) = (a, b) match {
-    case (Fresh, Fresh) => Fresh
-    case _ => NonFresh
+  def joinLocality(a: Locality, b: Locality) = (a, b) match {
+    case (Loc(as), Loc(bs)) => Loc(as ++ bs)
+    case _ => NonLoc
   }
 
   def joinState(a: State, b: State) = (a, b) match {
@@ -27,10 +27,13 @@ abstract class StateLattice extends CompleteLattice {
   }
 
   def lte(a: Elem, b: Elem) =
-    lteState(a._1, b._1) && lteFreshness(a._2, b._2)
+    lteState(a._1, b._1) && lteLocality(a._2, b._2)
 
-  def lteFreshness(a: Freshness, b: Freshness) =
-    a == Fresh || b == NonFresh
+  def lteLocality(a: Locality, b: Locality) = (a, b) match {
+    case (_, NonLoc) => true
+    case (Loc(as), Loc(bs)) => as.subsetOf(bs)
+    case (NonLoc, _) => false
+  }
 
   def lteState(a: State, b: State) = (a, b) match {
     case (_, ModAll) => true
@@ -39,11 +42,10 @@ abstract class StateLattice extends CompleteLattice {
   }
 
   sealed abstract class State
-//  case object Fresh extends State
   case class Mod(locations: i.Set[Symbol] = i.Set()) extends State
   case object ModAll extends State
 
-  sealed abstract class Freshness
-  case object Fresh extends Freshness
-  case object NonFresh extends Freshness
+  sealed abstract class Locality
+  case class Loc(locations: i.Set[Symbol] = i.Set()) extends Locality
+  case object NonLoc extends Locality
 }
