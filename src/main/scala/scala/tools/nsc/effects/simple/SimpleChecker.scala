@@ -34,7 +34,7 @@ class SimpleChecker(val global: Global) extends EffectChecker[SimpleLattice] wit
   }
 
   def toAnnotation(elem: Elem) = elem match {
-    case Eff =>   AnnotationInfo(effClass.tpe, Nil, Nil)
-    case NoEff => AnnotationInfo(noEffClass.tpe, Nil, Nil)
+    case Eff =>   List(AnnotationInfo(effClass.tpe, Nil, Nil))
+    case NoEff => List(AnnotationInfo(noEffClass.tpe, Nil, Nil))
   }
 }

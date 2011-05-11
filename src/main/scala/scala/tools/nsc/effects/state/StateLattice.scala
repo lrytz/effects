@@ -10,7 +10,7 @@ abstract class StateLattice extends CompleteLattice {
 
   type Elem = (State, Locality)
 
-  val bottom = (Mod(), Loc()) // @TODO: maybe Mod(Set()) ?? since this is the value we use for @pure ??
+  val bottom = (Mod(), Loc()) // @TODO: maybe (Mod(), NonLoc) ?? since this is the value we use for @pure ??
   val top = (ModAll, NonLoc)
 
   def join(a: Elem, b: Elem) =
@@ -22,7 +22,12 @@ abstract class StateLattice extends CompleteLattice {
   }
 
   def joinState(a: State, b: State) = (a, b) match {
-    case (Mod(as), Mod(bs)) => Mod(as ++ bs)
+    case (Mod(as), Mod(bs)) => {
+      // @modIfLoc(a, b) | @mod(a)  ==>  @modIfLoc(a, b)
+      val (_, takeAs) = as.partition(a => a.param == None && bs.exists(_.location == a.location))
+      val (_, takeBs) = bs.partition(b => b.param == None && takeAs.exists(_.location == b.location))
+      Mod(takeAs ++ takeBs)
+    }
     case (_, _) => ModAll
   }
 
@@ -37,13 +42,22 @@ abstract class StateLattice extends CompleteLattice {
 
   def lteState(a: State, b: State) = (a, b) match {
     case (_, ModAll) => true
-    case (Mod(as), Mod(bs)) => as.subsetOf(bs)
+    case (Mod(as), Mod(bs)) => as.forall(a => bs.exists(b => a.lte(b)))
     case (ModAll, _) => false
   }
 
   sealed abstract class State
-  case class Mod(locations: i.Set[Symbol] = i.Set()) extends State
+  case class Mod(locations: i.Set[ModIfLoc] = i.Set()) extends State {
+    def this(location: Symbol) = this(i.Set(ModIfLoc(location)))
+  }
   case object ModAll extends State
+
+  case class ModIfLoc(location: Symbol, param: Option[Symbol] = None) {
+    def lte(o: ModIfLoc) = {
+      location == o.location &&
+      (param.isEmpty || (!o.param.isEmpty && param.get == o.param.get))
+    }
+  }
 
   sealed abstract class Locality
   case class Loc(locations: i.Set[Symbol] = i.Set()) extends Locality

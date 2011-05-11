@@ -15,9 +15,10 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] {
   val lattice = new StateLattice {
     val global: StateChecker.this.global.type = StateChecker.this.global
   }
-  import lattice.{Mod, ModAll, Loc, NonLoc}
+  import lattice.{Mod, ModAll, ModIfLoc, Loc, NonLoc}
 
   val modClass = definitions.getClass("scala.annotation.effects.state.mod")
+  val modIfLocClass = definitions.getClass("scala.annotation.effects.state.modIfLoc")
   val modAllClass = definitions.getClass("scala.annotation.effects.state.modAll")
   val locClass = definitions.getClass("scala.annotation.effects.state.loc")
   val nonLocClass = definitions.getClass("scala.annotation.effects.state.nonLoc")
@@ -28,12 +29,21 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] {
   def fromAnnotation(annots: List[AnnotationInfo]): Option[Elem] = {
     val locAnn = annots.filter(_.atp.typeSymbol == locClass).headOption
     locAnn.map(m => (Mod(), Loc(m.args.map(_.symbol).toSet))) orElse {
+
       val modAllAnn = annots.filter(_.atp.typeSymbol == modAllClass).headOption
       modAllAnn.map(_ => (ModAll, NonLoc)) orElse {
-        val modAnn = annots.filter(_.atp.typeSymbol == modClass).headOption
-        modAnn.map(m => {
-          (Mod(m.args.map(_.symbol).toSet), NonLoc)
-        }) orElse {
+
+        // @mod(a, b) @mod(c)  ==>  List(ModIfLoc(a, None), ModIfLoc(b, None), ModIfLoc(c, None))
+        val modAnn = annots.filter(_.atp.typeSymbol == modClass)
+        val mod = modAnn.flatMap(m => m.args.map(arg => ModIfLoc(arg.symbol)))
+
+        // @modIfLoc(a, b) @modIfLoc(c, d)  ==> List(ModIfLoc(a, Some(b), ModIfLoc(c, Some(d))
+        val modIfLocAnn = annots.filter(_.atp.typeSymbol == modIfLocClass)
+        val modIfLoc = modIfLocAnn.map(m => ModIfLoc(m.args(0).symbol, Some(m.args(1).symbol)))
+
+        if (!modAnn.isEmpty || !modIfLocAnn.isEmpty) {
+          Some((Mod((mod ::: modIfLoc).toSet), NonLoc))
+        } else {
           val pureAnn = annots.filter(_.atp.typeSymbol == pureAnnotation).headOption
           pureAnn.map(_ => (Mod(), NonLoc))
         }
@@ -41,10 +51,17 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] {
     }
   }
 
-  def toAnnotation(elem: Elem): AnnotationInfo = elem match {
-    case (_, Loc(locations)) => AnnotationInfo(locClass.tpe, locations.toList.map(Ident(_)), Nil)
-    case (Mod(locations), _) => AnnotationInfo(modClass.tpe, locations.toList.map(Ident(_)), Nil)
-    case (ModAll, _) => AnnotationInfo(modAllClass.tpe, Nil, Nil)
+  def toAnnotation(elem: Elem): List[AnnotationInfo] = elem match {
+    case (_, Loc(locations)) =>
+      List(AnnotationInfo(locClass.tpe, locations.toList.map(Ident(_)), Nil))
+
+    case (Mod(mils), _) =>
+      val (mods, modsIfLoc) = mils.toList.partition(_.param.isEmpty)
+      AnnotationInfo(modClass.tpe, mods.map(mod => Ident(mod.location)), Nil) ::
+      modsIfLoc.map(mil => AnnotationInfo(modIfLocClass.tpe, List(Ident(mil.location), Ident(mil.param.get)), Nil))
+
+    case (ModAll, _) =>
+      List(AnnotationInfo(modAllClass.tpe, Nil, Nil))
   }
 
   override def newEffectTraverser(tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit): EffectTraverser =

@@ -100,7 +100,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   def fromAnnotation(annots: List[AnnotationInfo]): Option[Elem]
   def fromAnnotation(tpe: Type): Option[Elem] = fromAnnotation(tpe.finalResultType.annotations)
 
-  def toAnnotation(elem: Elem): AnnotationInfo
+  def toAnnotation(elem: Elem): List[AnnotationInfo]
 
   val inferAnnotation = definitions.getClass("scala.annotation.effects.infer")
   val refineAnnotation = definitions.getClass("scala.annotation.effects.refine")
@@ -141,9 +141,9 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   /**
    * Returns a the type `tp` with effect annotation `annot`.
    */
-  def typeWithEffect(tp: Type, annot: AnnotationInfo): Type = {
+  def typeWithEffect(tp: Type, annots: List[AnnotationInfo]): Type = {
     onResultType(tp, rt => {
-      removeAnnotations(rt, annotationClasses).withAnnotation(annot)
+      removeAnnotations(rt, annotationClasses).withAnnotations(annots)
     })
   }
 
@@ -157,7 +157,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   /**
    *  Updates the effect annotation on `method` to `annot`.
    */
-  def updateEffect(method: Symbol, annot: AnnotationInfo) {
+  def updateEffect(method: Symbol, annot: List[AnnotationInfo]) {
     method.updateInfo(typeWithEffect(method.tpe, annot))
   }
 
@@ -598,7 +598,8 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    */
 
   /**
-   * Compute and return the effect caused by executing `tree`
+   * Compute and return the effect caused by executing `tree`.
+   * @TODO: doc why we have to call `refine` first.
    */
   def computeEffect(sym: Symbol, tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit) = {
     val refinedTree = transformed.getOrElseUpdate(sym, refine(tree, typer, owner, unit))

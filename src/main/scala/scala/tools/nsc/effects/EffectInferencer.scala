@@ -140,7 +140,7 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
         case vd @ ValDef(_, _, tt @ TypeTree(), rhs) =>
           val (transOwner, transTyper) = atOwner(tree.symbol)((currentOwner, localTyper))
 
-          // at typer phase so that lazy effect types get forced yet.
+          // at typer phase so that lazy effect types don't get forced yet.
           val (getter, setter) = atPhase(currentRun.typerPhase)(sym.getter(sym.owner), sym.setter(sym.owner))
 
           if (rhs.isEmpty || !inferRefinement(sym, tt.wasEmpty)) {

@@ -33,8 +33,8 @@ class XioChecker(val global: Global) extends EffectChecker[XioLattice] {
   }
 
   def toAnnotation(elem: Elem) = elem match {
-    case Xio =>   AnnotationInfo(xioClass.tpe, Nil, Nil)
-    case NoXio => AnnotationInfo(noXioClass.tpe, Nil, Nil)
+    case Xio =>   List(AnnotationInfo(xioClass.tpe, Nil, Nil))
+    case NoXio => List(AnnotationInfo(noXioClass.tpe, Nil, Nil))
   }
 
 }

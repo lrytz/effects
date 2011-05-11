@@ -55,13 +55,13 @@ class ExceptionsChecker(val global: Global) extends EffectChecker[ExceptionsLatt
     }*/
   }
 
-  def toAnnotation(elem: Elem): AnnotationInfo = {
+  def toAnnotation(elem: Elem): List[AnnotationInfo] = {
     def toType(elem: Elem): Type = elem match {
       case Nil => lattice.nothingType
       case x :: Nil => x
       case x :: xs => typeRef(barTrait.tpe.prefix, barTrait, List(x, toType(xs)))
     }
-    AnnotationInfo(typeRef(throwsClass.tpe.prefix, throwsClass, List(toType(elem))), Nil, Nil)
+    List(AnnotationInfo(typeRef(throwsClass.tpe.prefix, throwsClass, List(toType(elem))), Nil, Nil))
   }
   
   override def newEffectTraverser(tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit): EffectTraverser =

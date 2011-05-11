@@ -26,8 +26,9 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
   def fromAnnotation(annots: List[AnnotationInfo]): Option[Elem] = 
     pcFromAnnotations(annots)
 
-  def toAnnotation(elem: Elem): AnnotationInfo = elem match {
-    case AnyPC => AnnotationInfo(anyPcClass.tpe, Nil, Nil)
+  def toAnnotation(elem: Elem): List[AnnotationInfo] = elem match {
+    case AnyPC =>
+      List(AnnotationInfo(anyPcClass.tpe, Nil, Nil))
     case PC(xs) =>
       val args = xs map(c => {
         c.argtpss.foldLeft[Tree](Select(Ident(c.param), c.fun))(
@@ -37,7 +38,7 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
       // every tree needs a type for pickling. types should be correct, else later
       // phases might crash (refchecks). so let's run a typer.
       val typedArgs = args map (typer.typed(_))
-      AnnotationInfo(pcClass.tpe, typedArgs, List())
+      List(AnnotationInfo(pcClass.tpe, typedArgs, List()))
   }
   
   override def applicationEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context) = {
