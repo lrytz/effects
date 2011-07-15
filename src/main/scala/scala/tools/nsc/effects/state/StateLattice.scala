@@ -2,64 +2,275 @@ package scala.tools.nsc.effects
 package state
 
 import tools.nsc.Global
-import collection.{immutable => i}
+import collection.immutable.{Set, Map}
 
 abstract class StateLattice extends CompleteLattice {
   val global: Global
   import global._
 
-  type Elem = (State, Locality)
+  type Elem = (Store, Assignment, Locality)
 
-  val bottom = (Mod(), Loc()) // @TODO: maybe (Mod(), NonLoc) ?? since this is the value we use for @pure ??
-  val top = (ModAll, NonLoc)
+  val bottom = (StoreLoc(), AssignLoc(), LocSet()) // @TODO: maybe (StoreLoc(), AssignLoc(), AnyLoc) ?? since this is the value we use for @pure
+  val top = (StoreAny, AssignAny(AnyLoc), AnyLoc)
 
+
+  /**
+   * Join effects, e.g. in
+   * 
+   *   if (..) { x = a } else { if (..) x = b }
+   *   
+   * the resulting effect is @weakAssign(x, {a, b})
+   */
   def join(a: Elem, b: Elem) =
-    (joinState(a._1, b._1), joinLocality(a._2, b._2))
+    (joinStore(a._1, b._1), joinAssignment(a._2, b._2), joinLocality(a._3, b._3))
 
-  def joinLocality(a: Locality, b: Locality) = (a, b) match {
-    case (Loc(as), Loc(bs)) => Loc(as ++ bs)
-    case _ => NonLoc
+  /**
+   * Sequence effects. For instance, in a block
+   *   {
+   *     x = a
+   *     if (..) x = b
+   *   }
+   *
+   * The effect is @strongAssign(x, {a, b})
+   */
+  def sequence(a: Elem, b: Elem) =
+    (joinStore(a._1, b._1), sequenceAssignment(a._2, b._2), joinLocality(a._3, b._3))
+
+
+  def joinStore(a: Store, b: Store): Store = (a, b) match {
+    case (StoreAny, _) | (_, StoreAny) =>
+      StoreAny
+
+    case (StoreLoc(as), StoreLoc(bs)) =>
+      val merged = (Map[Location, LocSet]() /: as) {
+        case (map, (location, aSet)) =>
+          val res = bs.get(location).map(aSet.union).getOrElse(aSet)
+          map + (location -> res)
+      }
+      val onlyInB = bs.filterNot(elem => as.contains(elem._1))
+      StoreLoc(merged ++ onlyInB)
   }
 
-  def joinState(a: State, b: State) = (a, b) match {
-    case (Mod(as), Mod(bs)) => {
-      // @modIfLoc(a, b) | @mod(a)  ==>  @modIfLoc(a, b)
-      val (_, takeAs) = as.partition(a => a.param == None && bs.exists(_.location == a.location))
-      val (_, takeBs) = bs.partition(b => b.param == None && takeAs.exists(_.location == b.location))
-      Mod(takeAs ++ takeBs)
-    }
-    case (_, _) => ModAll
+
+  /**
+   * Joining a strong and a weak assignment results in a weak assigment.
+   */
+  def joinAssignment(a: Assignment, b: Assignment): Assignment = (a, b) match {
+    case (AssignAny(as), b) =>
+      AssignAny(joinLocality(as, b.assignedLocality))
+      
+    case (a, AssignAny(bs)) =>
+      AssignAny(joinLocality(a.assignedLocality, bs))
+      
+    case (AssignLoc(aStrong, aWeak), AssignLoc(bStrong, bWeak)) =>
+      /* aStrong, aWeak, bStrong, bWeak: Map[Location, Locality]
+       * 
+       * Example: given
+       *   a: AssignLoc(strong(x -> {a}),                     weak(y -> {b}))
+       *   b: AssignLoc(strong(x -> {c}, y -> {d}, z -> {e}), weak(v -> {f}))
+       *   
+       *  - x is strong in both            => strong in the result, merge localities
+       *  - y is weak in a                 => weak in the result, merge localities
+       *  - z (strong) does not exist in a => weak in the result
+       *  - v (weak) does not exist in a   => weak in the result
+       *
+       *  ==> AssignLoc(strong(x -> {a, c}), weak(y -> {b, d}, z -> {e}, v -> {f}))
+       */
+      
+      val (strong, aBecomeWeak) = ((Map[Location, Locality](), Map[Location, Locality]()) /: aStrong) {
+        case ((strong, weak), (location, aLoc)) =>
+          bStrong.get(location) match {
+            case Some(bLoc) => (strong + (location -> joinLocality(aLoc, bLoc)), weak)
+            case None => (strong, weak + (location -> aLoc))
+          }          
+      }
+
+      val aAllWeak = aWeak ++ aBecomeWeak
+      val bAllWeak = bWeak ++ bStrong.filterNot(elem => strong.contains(elem._1))
+      
+      val mergedWeak = (Map[Location, Locality]() /: aAllWeak) {
+        case (map, (location, aLoc)) =>
+          val res = bAllWeak.get(location).map(joinLocality(aLoc, _)).getOrElse(aLoc)
+          map + (location -> res)
+      }
+      
+      val weak = mergedWeak ++ bAllWeak.filterNot(elem => mergedWeak.contains(elem._1))
+      
+      AssignLoc(strong, weak)
+  }
+  
+  def sequenceAssignment(a: Assignment, b: Assignment): Assignment = (a, b) match {
+    case (AssignAny(as), b) =>
+      AssignAny(joinLocality(as, b.assignedLocality))
+      
+    case (a, AssignAny(bs)) =>
+      AssignAny(joinLocality(a.assignedLocality, bs))
+
+    case (AssignLoc(aStrong, aWeak), AssignLoc(bStrong, bWeak)) =>
+      /* aStrong, aWeak, bStrong, bWeak: Map[Location, Locality]
+       *
+       * For each location:
+       * 
+       *   s = strong write
+       *   w = weak write
+       *   _ = no assign effect for that location
+       * 
+       *   | a | b || result               |
+       *   +---+---++----------------------+
+       *   | * | s || s with locality in b |
+       *   | s | w || s, merge localities  | (1)
+       *   | w | w || w, merge localities  | (2)
+       *   | _ | w || w with locality in b | (3)
+       *   | * | _ || as a                 | (1), (2)
+       */
+      
+      val aStrongVisible = aStrong.filterNot(elem => bStrong.contains(elem._1))
+      val aWeakVisible = aWeak.filterNot(elem => bStrong.contains(elem._1))
+      
+      // (1)
+      val aStrongMerged = (Map[Location, Locality]() /: aStrongVisible) {
+        case (map, (location, aLoc)) =>
+          val res = bWeak.get(location).map(joinLocality(aLoc, _)).getOrElse(aLoc)
+          map + (location -> res)
+      }
+      
+      // (2)
+      val aWeakMerged = (Map[Location, Locality]() /: aWeakVisible) {
+        case (map, (location, aLoc)) =>
+          val res = bWeak.get(location).map(joinLocality(aLoc, _)).getOrElse(aLoc)
+          map + (location -> res)
+      }
+      
+      // (3)
+      val bWeakOnly = bWeak.filterNot(elem => aStrongMerged.contains(elem._1) || aWeakMerged.contains(elem._1))
+
+      val strong = bStrong ++ aStrongMerged
+      val weak = aWeakMerged ++ bWeakOnly
+      
+      AssignLoc(strong, weak)
   }
 
+
+  def joinLocality(a: Locality, b: Locality): Locality = (a, b) match {
+    case (AnyLoc, _) | (_, AnyLoc) =>
+      AnyLoc
+
+    case (LocSet(as), LocSet(bs)) =>
+      LocSet(as ++ bs)
+  }
+
+
+  /**
+   * LTE
+   */
   def lte(a: Elem, b: Elem) =
-    lteState(a._1, b._1) && lteLocality(a._2, b._2)
+    lteStore(a._1, b._1) && lteAssignment(a._2, b._2) && lteLocality(a._3, b._3)
 
+  def lteStore(a: Store, b: Store) = (a, b) match {
+    case (_, StoreAny) => true
+    case (StoreAny, _) => false
+    case (StoreLoc(as), StoreLoc(bs)) =>
+      as.forall({
+        case (location, aSet) => bs.get(location).map(bSet => aSet.s.subsetOf(bSet.s)).getOrElse(false)
+      })
+  }
+  
+  // strong update is smaller than weak update
+  def lteAssignment(a: Assignment, b: Assignment) = (a, b) match {
+    case (a, AssignAny(bs)) => lteLocality(a.assignedLocality, bs)
+    case (AssignAny(as), b) => false
+    case (AssignLoc(aStrong, aWeak), AssignLoc(bStrong, bWeak)) =>
+      aStrong.forall({
+        case (location, aLoc) =>
+          bStrong.get(location).map(bLoc => lteLocality(aLoc, bLoc)).getOrElse({
+            bWeak.get(location).map(bLoc => lteLocality(aLoc, bLoc)).getOrElse(false)
+          })
+      }) &&
+      aWeak.forall({
+        case (location, aLoc) =>
+          bWeak.get(location).map(bLoc => lteLocality(aLoc, bLoc)).getOrElse(false)
+      })
+  }
+  
   def lteLocality(a: Locality, b: Locality) = (a, b) match {
-    case (_, NonLoc) => true
-    case (Loc(as), Loc(bs)) => as.subsetOf(bs)
-    case (NonLoc, _) => false
+    case (_, AnyLoc) => true
+    case (AnyLoc, _) => false
+    case (LocSet(as), LocSet(bs)) =>
+      as.subsetOf(bs)
+  }
+    
+
+  /**
+   * Locality of returned value
+   */
+  trait Locality
+  case object AnyLoc extends Locality
+  case class LocSet(s: Set[Location] = Set()) extends Locality {
+    def this(l: Location) = this(Set(l))
+    
+    def union(b: LocSet) = LocSet(s union b.s)
+/*
+    def diff(b: LocSet) = LocSet(s diff b.s)
+    def intersect(b: LocSet) = LocSet(s intersect b.s)
+*/
+  }
+  object LocSet {
+    def apply(l: Location): LocSet = new LocSet(l)
   }
 
-  def lteState(a: State, b: State) = (a, b) match {
-    case (_, ModAll) => true
-    case (Mod(as), Mod(bs)) => as.forall(a => bs.exists(b => a.lte(b)))
-    case (ModAll, _) => false
-  }
+  // will maybe be useful
+  /* implicit def set2LocSet(s: Set[Location]) = new LocSet(s) */
+  
+  /**
+   * Locations, places that are subject to modification effects.
+   */
+  trait Location
+  case class SymLoc(sym: Symbol) extends Location
+  case class ThisLoc(sym: Symbol) extends Location
+  case object Fresh extends Location
+  
 
-  sealed abstract class State
-  case class Mod(locations: i.Set[ModIfLoc] = i.Set()) extends State {
-    def this(location: Symbol) = this(i.Set(ModIfLoc(location)))
-  }
-  case object ModAll extends State
-
-  case class ModIfLoc(location: Symbol, param: Option[Symbol] = None) {
-    def lte(o: ModIfLoc) = {
-      location == o.location &&
-      (param.isEmpty || (!o.param.isEmpty && param.get == o.param.get))
+  /**
+   * State modifications
+   */
+  trait Store {
+    def include(in: Location, from: Location): Store = include(in, LocSet(from))
+    def include(in: Location, from: Locality): Store = this match {
+      case StoreAny =>
+        StoreAny
+      case StoreLoc(effs) => from match {
+        case AnyLoc => StoreAny
+        case locs @ LocSet(_) =>
+/*          val res = effs.updated(in, effs.get(in).map(locs.union).getOrElse(locs))
+          StoreLoc(res)*/
+          StoreLoc(extendStoreMap(effs, in, locs))
+      }
     }
   }
+  case object StoreAny extends Store
+  case class StoreLoc(effs: Map[Location, LocSet] = Map()) extends Store
+  
+  def extendStoreMap(map: Map[Location, LocSet], loc: Location, set: LocSet) =
+    map.updated(loc, map.get(loc).map(set.union).getOrElse(set))
 
-  sealed abstract class Locality
-  case class Loc(locations: i.Set[Symbol] = i.Set()) extends Locality
-  case object NonLoc extends Locality
+  /**
+   * Assignments to local variables
+   */
+  trait Assignment {
+    def assignedLocality: Locality
+    def include(in: Location, from: Locality, useStrong: Boolean) = this match {
+      case AssignAny(to) =>
+        AssignAny(joinLocality(to, from))
+      case AssignLoc(strong, weak) =>
+        val m = if (useStrong) strong else weak
+        val res = m.updated(in, m.get(in).map(joinLocality(from, _)).getOrElse(from))
+        if (useStrong) AssignLoc(res, weak) else AssignLoc(strong, res)
+    }
+  }
+  case class AssignAny(to: Locality) extends Assignment {
+    def assignedLocality = to
+  }
+  case class AssignLoc(strong: Map[Location, Locality] = Map(), weak: Map[Location, Locality] = Map()) extends Assignment {
+    def assignedLocality = ((LocSet(): Locality) /: (strong.values ++ weak.values))(joinLocality _)
+  }
 }
