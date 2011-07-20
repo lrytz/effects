@@ -13,6 +13,12 @@ abstract class StateLattice extends CompleteLattice {
   val bottom = (StoreLoc(), AssignLoc(), LocSet()) // @TODO: maybe (StoreLoc(), AssignLoc(), AnyLoc) ?? since this is the value we use for @pure
   val top = (StoreAny, AssignAny(AnyLoc), AnyLoc)
 
+  /**
+   * Construct effect elements form effects in one domain.
+   */
+  def mkElem(store: Store) = (store, AssignLoc(), LocSet())
+  def mkElem(assign: Assignment) = (StoreLoc(), assign, LocSet())
+  def mkElem(loc: Locality) = (StoreLoc, AssignLoc(), loc)
 
   /**
    * Join effects, e.g. in
@@ -224,7 +230,13 @@ abstract class StateLattice extends CompleteLattice {
   /**
    * Locations, places that are subject to modification effects.
    */
-  trait Location
+  trait Location {
+    def isLocalVar = this match {
+      case SymLoc(sym) => !sym.isParameter && sym.isVariable
+      case ThisLoc(_) => false
+      case Fresh => false
+    }
+  }
   case class SymLoc(sym: Symbol) extends Location
   case class ThisLoc(sym: Symbol) extends Location
   case object Fresh extends Location
@@ -258,12 +270,12 @@ abstract class StateLattice extends CompleteLattice {
    */
   trait Assignment {
     def assignedLocality: Locality
-    def include(in: Location, from: Locality, useStrong: Boolean) = this match {
+    def include(to: Location, from: Locality, useStrong: Boolean) = this match {
       case AssignAny(to) =>
         AssignAny(joinLocality(to, from))
       case AssignLoc(strong, weak) =>
         val m = if (useStrong) strong else weak
-        val res = m.updated(in, m.get(in).map(joinLocality(from, _)).getOrElse(from))
+        val res = m.updated(to, m.get(to).map(joinLocality(from, _)).getOrElse(from))
         if (useStrong) AssignLoc(res, weak) else AssignLoc(strong, res)
     }
   }
@@ -271,6 +283,13 @@ abstract class StateLattice extends CompleteLattice {
     def assignedLocality = to
   }
   case class AssignLoc(strong: Map[Location, Locality] = Map(), weak: Map[Location, Locality] = Map()) extends Assignment {
+    def this(to: Location, from: Locality, useStrong: Boolean) = {
+      this(if (useStrong) Map(to -> from) else Map(), if (useStrong) Map() else Map(to -> from))
+    }
+
     def assignedLocality = ((LocSet(): Locality) /: (strong.values ++ weak.values))(joinLocality _)
+  }
+  object AssignLoc {
+    def apply(to: Location, from: Locality, useStrong: Boolean) = new AssignLoc(to, from, useStrong)
   }
 }

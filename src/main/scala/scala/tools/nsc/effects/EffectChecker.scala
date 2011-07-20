@@ -48,14 +48,21 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   val refineType: m.Set[Symbol] = new m.HashSet()
 
   // @TODO: probably not needed with the `transformed` map below
-  val refinedSymbols: m.Set[Symbol] = new m.HashSet()
+  // val refinedSymbols: m.Set[Symbol] = new m.HashSet()
 
   /**
-   * A map that stores trees whose refinement has already been computed
-   * due to a lazy type (refinement inference).
-   *
-   * Not for effect inference, since computing effects is done by a
-   * traverser, there's no transformer involved.
+   * A map that stores `rhs` trees of ValDef and DefDef, that have been transformed
+   * by the `refine` function.
+   * 
+   * The reason we need this map: The EffectInferencer assigns lazy types to symbols
+   * that obtain refined types (due to effect inference), see its docs. Computing these
+   * refined types uses the `refine` function, which changes (transforms) `rhs` trees.
+   * 
+   * Because completion of lazy types happens on demand, the resulting trees cannot
+   * be put pack into the tree. Therefore they are stored in this map.
+   * 
+   * Afterwards, the `Checker` transformer basically applies the `refine` transformation
+   * on the entire tree, but it re-uses the results in this map if available.
    */
   val transformed: m.Map[Symbol, Tree] = new m.HashMap()
 
@@ -186,6 +193,8 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    *  funTp : () => Int
    *  effect: Eff
    *  result: (() => Int) { def apply(): Int @eff }
+   *  
+   * @param owner is the owner of the newly created refinement class symbol.
    */
   def functionTypeWithEffect(funTp: Type, effect: Elem, owner: Symbol, pos: Position): Type = {
     import definitions.FunctionClass
@@ -281,8 +290,12 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     override def transform(tree: Tree): Tree = {
       tree match {
         case dd@DefDef(_, _, _, _, _, rhs) if !rhs.isEmpty =>
-          val td = super.transform(dd).asInstanceOf[DefDef] // @TODO: doc why this needs to be done first. why?
+          // @TODO: could probably also call first `checkDefDef` and then
+          // feed the result in `super.transform`. then no need for a cast.
+          val td = super.transform(dd).asInstanceOf[DefDef]
           atOwner(td.symbol) {
+            // @TOOD: like in the EffectInferencer, don't we have to do `reenterTypeParams` and `reenterValueParams`?
+            // because `checkDefDef` calls `refine`, which does the re-type-checking thing. => test it!
             checkDefDef(td, localTyper, currentOwner, unit)
           }
 
@@ -308,6 +321,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    */
   def checkDefDef(dd: DefDef, typer: Typer, owner: Symbol, unit: CompilationUnit): DefDef = {
     val sym = dd.symbol
+    // @TODO: can we assert(owner == sym)? it should probably be, right? see call in the `Checker` above.
 
     val symEff = fromAnnotation(sym.tpe).getOrElse(abort("no latent effect annotation on " + sym))
     val symTp = sym.tpe.finalResultType // @TODO: what about type parameters? def f[T](x: T): T = x
@@ -319,25 +333,19 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
         effectError(dd, symEff, rhsEff)
     }
 
-    /**
-     * Note that "computeEffect" might call "refine" on the rhs, and put the
-     * result into the "transformed" map. This makes the followin example work:
-     *
-     *   def f: (() => Int) @infer @refine = () => 1
-     *   def v: Int @noEff = f.apply()
-     *
-     * Initial type checking assigns the symbol "Function0.apply" to "f.apply",
-     * which has the maximal effect. Calling "refine" on the rhs assings to
-     * "f.apply" the symbol "<refinement>.apply", which is pure.
+    /* Note that "computeEffect" might call "refine" on the rhs, and put the
+     * result into the "transformed" map, see comment on `computeEffect`.
      */
 
     val refinedRhs =
       if (refineType(sym) || sym.isConstructor) {
         // @TODO: assert(transformed.contains(sym)) ??? probably false for constructors
+        // why not call `refine` in getOrElse? because we know it has already been called
+        // above when looking at `sym.tpe`?
         transformed.getOrElse(sym, dd.rhs)
       } else {
         // Check or infer the return type
-        val rhs1 = transformed.getOrElseUpdate(sym, refine(dd.rhs, typer, owner, unit))
+        val rhs1 = refine(sym, dd.rhs, typer, owner, unit)
         checkRefinement(dd, rhs1.tpe, symTp)
         rhs1
       }
@@ -356,16 +364,17 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
 
   def checkValDef(vd: ValDef, typer: Typer, owner: Symbol, unit: CompilationUnit): ValDef = {
     val sym = vd.symbol
+    // @TODO: can we assert(owner == sym)?
 
     val symTp = sym.tpe
 
     val refinedRhs =
       if (refineType(sym)) {
-        // @TODO: assert(transformed.contains(sym)) ???
+        // @TODO: assert(transformed.contains(sym)), because we looked at sym.tpe???
         transformed.getOrElse(sym, vd.rhs)
       } else {
         // Check or infer the return type
-        val rhs1 = transformed.getOrElseUpdate(sym, refine(vd.rhs, typer, owner, unit))
+        val rhs1 = refine(sym, vd.rhs, typer, owner, unit)
         checkRefinement(vd, rhs1.tpe, symTp)
         rhs1
       }
@@ -412,7 +421,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    */
   def computeType(sym: Symbol, rhs: Tree, origTp: Type, typer: Typer, owner: Symbol, unit: CompilationUnit): Type = {
     // computeType can be called multiple times (value, getter, setter)
-    val refined = transformed.getOrElseUpdate(sym, refine(rhs, typer, owner, unit))
+    val refined = refine(sym, rhs, typer, owner, unit)
 
     val packed = typer.packedType(refined, sym)
     val widened = typer.namer.widenIfNecessary(sym, packed, WildcardType)
@@ -420,12 +429,41 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     onResultType(origTp, tp => widened.withAnnotations(tp.annotations))
   }
 
-  def refine(tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit): Tree = {
-    val refiner = new RefineTransformer(unit, typer, owner, tree)
-    refiner.refine()
+  def refine(sym: Symbol, tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit): Tree = {
+    transformed.getOrElseUpdate(sym, {
+      val refiner = new RefineTransformer(unit, typer, owner, tree)
+      refiner.refine()
+    })
   }
 
-  // @TODO: maybe have anoter parameter "pt", which will be used for re-type-to
+  /**
+   * During effect inference, some symbols acquire more specific (refined) types. For
+   * exmple, the methods
+   * 
+   *   val foo: (Int => Int) @refine = (x: Int) => x
+   *   
+   * has type `Int => Int` after ordinary type-checking. Effect inference assigns to
+   * it a refinement type `(Int => Int){ def apply(x: Int): Int @pure }`.
+   * 
+   * This change of type influences the side-effect that is computed for code which
+   * uses `foo`. Take the following method:
+   * 
+   *   def bar: Int @infer = foo.apply(10)
+   * 
+   * When computing the side-effect, we look at the symbol of `foo.apply`. Again,
+   * ordinary type-checking resolved this selection to the symbol `Function1.apply`.
+   * Using this, we would conclude the maximal side-effect for that application.
+   * 
+   * The `RefineTransformer` updates all references to symbols with refined types.
+   * It does so by removing symbol and type information from the tree and running
+   * the type-checker agian on sub-trees to the selection.
+   * 
+   * After the refine-transformer, the selection `foo.apply` will have symbol
+   * `<refinement>.apply` (refinement type above). Therefore, effect checking can
+   * conclude that applying this function is pure.
+   * 
+   * A special treatment is given to anonymous function trees, see comment below.
+   */
   class RefineTransformer(unit: CompilationUnit, typer: Typer, owner: Symbol, tree: Tree) extends TypingTransformer(unit) {
     localTyper = typer
     currentOwner = owner
@@ -462,8 +500,14 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       if (refineType(sym) || (sym.isGetter && refineType(sym.accessed))) {
         untypeTo(tree, true)
       } else if (atPhase(currentRun.typerPhase)(sym.tpe) != sym.tpe) {
-        // symbols from a previous run might have a non-refined function type at typer, but
-        // a refined one at the current phase. @TODO: need nicer way to handle this!
+        /* Catch symbols defined in a previous compiler-run (interpreter) that were refined.
+         * They don't appear in the `refineType` map for this run. However, they still change
+         * type, because the type history is kept and just updated to the new run. So even in
+         * the new run, at typer phase, these symbols are still not-refined, but they are
+         * refaned later (now).
+         * 
+         * @TODO: solve this more nicely.
+         */
         untypeTo(tree, true)
       }
 
@@ -471,16 +515,38 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     }
 
     override def transform(tree: Tree): Tree = tree match {
-      /* skipped by `transformStats`
+      /* already skipped by `transformStats`
       case ClassDef(_, _, _, _)     => tree
       case ModuleDef(_, _, _)       => tree
       case DefDef(_, _, _, _, _, _) => tree
       case ValDef(_, _, _, _)       => tree
       */
-
+      
+      /**
+       * Like the type of a `Select` node can change (select something whose type changes),
+       * the type of a `Function` can change as well. There are two things that can change:
+       * 
+       *   - the return type of the function, e.g. in `() => foo`, if the type of `foo` is,
+       *     refined, then the return type of the function changes.
+       *   - the type of the function can become a refinement, e.g. `() => 1` has first type
+       *   `() => Int`, then becomes `(() => Int) { def apply(): Int @pure }`
+       * 
+       * To find the first, we call `refine` on the body of the function and extract the
+       * type of the resulting tree.
+       * For the second, we call `computeEffect` on the function body and incorporate the
+       * effect annotation in the function type, using a refinement.
+       * 
+       * Just as with a `Select` that becomes a more specific type, we re-typecheck the part
+       * of the tree up to that `Function` node to take in account its more specific type.
+       */
       case Function(params, body) =>
         val sym = tree.symbol
-        val refinedBody = transformed.getOrElseUpdate(sym, EffectChecker.this.refine(body, localTyper, owner, unit))
+        // @TODO: should we not use `sym` as owner? Transformer class does `atOwner(tree.symbol)` before traversing the body.
+        // also, when calling `refine`, we should probably have that `sym` is always the same as `owner`.
+        // also, `atOwner` in a TypingTransformer updates the localTyper, which is actually done for function trees. but here,
+        // we just pass in the current typer, which is a different one!!!
+        // also, reenterType/ValueParams? see EffectInferencer, comment in checkDefDef...
+        val refinedBody = EffectChecker.this.refine(sym, body, localTyper, owner, unit)
 
         /**
          * Concequence of Effects being TypeConstraints
@@ -495,7 +561,9 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
           if (restpe == resultTypeArgument(tree.tpe)) tree.tpe
           else functionTypeWithResult(tree.tpe, restpe)
 
+        // @TODO: again, the owner should probably be `sym`, right? 
         val eff = computeEffect(sym, refinedBody, localTyper, owner, unit)
+        // @TODO the owner of the newly created `<refinement>` class symbol is `currentClass`. not sure if this is correct..
         val refinedType = functionTypeWithEffect(funtpe, eff, currentClass, tree.pos)
         if (refinedType != funtpe) {
           tree.tpe = refinedType
@@ -518,13 +586,16 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
 
     /**
      * Statements have no influence on typing
+     * 
+     * @TODO: sure that's correct? what if a statement refers to a symbol whose type
+     * is being refined, then that should be updated before computing the effect, no?
      */
     override def transformStats(stats: List[Tree], owner: Symbol): List[Tree] = stats
 
     /**
      * A Transformer that removes types and symbols on the path to the tree `stop`.
      *
-     * Transformer because it might remove some "TypeApply" nodes.
+     * Transformer (not traverser) because it might remove some "TypeApply" nodes.
      */
     private class ResetTransformer(stops: m.Set[(Tree, Boolean)]) extends Transformer {
       private val toUntype: m.Set[Tree] = new m.HashSet()
@@ -540,8 +611,8 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       private def untype(tree: Tree) {
 
         /**
-         * For Select, if the selected symbol is a method, we need to erase it,
-         * re-typechecking might assign a different symbol, namely when there's
+         * For Select, if the selected symbol is a method, we need to erase it.
+         * Re-typechecking might assign a different symbol, namely when there's
          * a refinement inferred. Example
          *
          *   val a: (() => Int) @refine = () => Int
@@ -557,7 +628,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
         }
 
         tree match {
-          case EmptyTree => // tpe_= throws an exception
+          case EmptyTree => // tpe_= throws an exception on EmptyTree
             ()
           case tt@TypeTree() =>
             if (tt.wasEmpty) tt.tpe = null
@@ -599,10 +670,22 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
 
   /**
    * Compute and return the effect caused by executing `tree`.
-   * @TODO: doc why we have to call `refine` first.
+   * 
+   * We first have to call `refine` on `tree` because computing the
+   * refined types can influence the effect of the result. Example:
+   * 
+   *   def foo(): C @refine = new C { def bar = 1 }
+   *   def baz: Int @infer = foo().bar
+   * 
+   * Note that `refine` not only computes more precise types for functions,
+   * but also assigns more precise symbols to `Select` nodes.
+   * So initially after ordinary type-checking, the tree that selects `bar`
+   * has as symbol "C.bar". However, after calling `refine`, that Select
+   * tree gets the more precise symbol `<refinement>.baz`, and `computeEffect`
+   * will find that applying this method is pure.
    */
   def computeEffect(sym: Symbol, tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit) = {
-    val refinedTree = transformed.getOrElseUpdate(sym, refine(tree, typer, owner, unit))
+    val refinedTree = refine(sym, tree, typer, owner, unit)
     newEffectTraverser(refinedTree, typer, owner, unit).compute()
   }
 
