@@ -22,27 +22,27 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   // @TODO: when to clear the hashmaps
 
   /**
-   * Contains method symbols for which the latent effect has to
-   * be inferrred. These are
-   *  - local methods
-   *  - private methods
-   *  - final methods (maybe?)
-   *  - methods annotated with @infer
+   * Contains method symbols for which the latent effect has to be inferrred.
+   * See method `inferEffect` for more details.
    */
   val inferEffect: m.Set[Symbol] = new m.HashSet()
 
   /**
-   * Contains symbols whose type might be refined with effect
-   * annotations in a refinement.
+   * Contains symbols whose type might change, i.e. become refined type with
+   * effect annotations in the refinement.
    *
    * For example, in
+   * 
    *   val a = (x: Int) => throw E
+   * 
    * the type of `a` changes from `Int => Nothing` to
    * `Int => Nothing { def apply(x: Int) => Nothing @throws[E] }`
    *
    * Another example: In
+   * 
    *   trait C { def foo(): Int }
    *   val x = new C { def foo() = 1 }
+   * 
    * the type of `x` changes from `C` to `C { def foo(): Int @pure }`
    */
   val refineType: m.Set[Symbol] = new m.HashSet()
@@ -194,7 +194,9 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    *  effect: Eff
    *  result: (() => Int) { def apply(): Int @eff }
    *  
-   * @param owner is the owner of the newly created refinement class symbol.
+   * @param owner is the owner of the newly created refinement class symbol. (@TODO: not
+   *   sure what it should be.. just the next enclosing owner? or the enclosing class?)
+   * 
    */
   def functionTypeWithEffect(funTp: Type, effect: Elem, owner: Symbol, pos: Position): Type = {
     import definitions.FunctionClass
@@ -282,9 +284,20 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    */
 
   /**
-   * Checks effect conformance
-   *  - Method's effect conforms to effect annotation on return type
-   *  - Conformance of refinement types with effect annotations
+   * The Checker is the main traversal of this phase (see method `newTransformer` at the
+   * end of this file to see how it's integrated). It traverses the entire program and
+   * checks conformance of side-effects:
+   *  - The effect of a method body has to conform to the effect annotation on the
+   *    methods return type
+   *  - For methods and values with a refined (return) type, it checks that the type
+   *    of the righthand-side conforms to the annotated one (including effect annotations
+   *    inside the refinement)
+   * 
+   * The Checker applies the `refine` transformation to all righthand sides of method
+   * and value definitions, and therefore it is itself a (typing) transformer. See doc
+   * in class EffectInferencer.
+   *  
+   * @TODO: should it also look at `Typed` trees?
    */
   class Checker(unit: CompilationUnit) extends TypingTransformer(unit) {
     override def transform(tree: Tree): Tree = {
@@ -362,6 +375,11 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     treeCopy.DefDef(dd, dd.mods, dd.name, dd.tparams, dd.vparamss, dd.tpt, refinedRhs)
   }
 
+  /**
+   * Check a DefDef tree
+   *  - that the type of the rhs conforms to the annotated type
+   *  - that no type is larger than from an overridden method
+   */
   def checkValDef(vd: ValDef, vdTyper: Typer, unit: CompilationUnit): ValDef = {
     val sym = vd.symbol
     // @TODO: can we assert(owner == sym)?
@@ -415,9 +433,8 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    */
 
   /**
-   * Computes the (refined) type of `rhs` and returns the type
-   * type `origTp` with this refined result type, while keeping
-   * existing annotations.
+   * Computes the (refined) type of `rhs` and returns the type type `origTp` with
+   * this refined result type, while keeping existing annotations.
    * 
    * @param rhs        The tree for which to compute the type. It has to be the righthand
    *                   side of a DefDef or ValDef tree
@@ -427,7 +444,8 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * @param unit  
    */
   def computeType(rhs: Tree, origTp: Type, rhsTyper: Typer, sym: Symbol, unit: CompilationUnit): Type = {
-    // computeType can be called multiple times (value, getter, setter)
+    // computeType can be called multiple times (value, getter, setter). Results are stored in
+    // the `transformed` map, see method `refine`.
     val refined = refine(rhs, rhsTyper, sym, unit)
 
     val packed = rhsTyper.packedType(refined, sym)
@@ -684,18 +702,18 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   /**
    * Compute and return the effect caused by executing `tree`.
    * 
-   * We first have to call `refine` on `tree` because computing the
-   * refined types can influence the effect of the result. Example:
+   * We first have to call `refine` on `tree` because computing the refined types
+   * can influence the effect of the result. Example:
    * 
    *   def foo(): C @refine = new C { def bar = 1 }
    *   def baz: Int @infer = foo().bar
    * 
-   * Note that `refine` not only computes more precise types for functions,
-   * but also assigns more precise symbols to `Select` nodes.
-   * So initially after ordinary type-checking, the tree that selects `bar`
-   * has as symbol "C.bar". However, after calling `refine`, that Select
-   * tree gets the more precise symbol `<refinement>.baz`, and `computeEffect`
-   * will find that applying this method is pure.
+   * Note that `refine` not only computes more precise types for functions, but also
+   * assigns more precise symbols to `Select` nodes. So initially after ordinary
+   * type-checking, the tree that selects `bar` has as symbol "C.bar". However,
+   * after calling `refine`, that Select tree gets the more precise symbol
+   * `<refinement>.baz`, and `computeEffect` will find that applying this method
+   * is pure.
    * 
    * @param rhs        The `rhs` tree of a DefDef or ValDef
    * @param rhsTyper   A typer instance with the right context for typing `rhs`

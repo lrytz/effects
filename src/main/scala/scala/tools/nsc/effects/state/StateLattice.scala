@@ -10,7 +10,11 @@ abstract class StateLattice extends CompleteLattice {
 
   type Elem = (Store, Assignment, Locality)
 
-  val bottom = (StoreLoc(), AssignLoc(), LocSet()) // @TODO: maybe (StoreLoc(), AssignLoc(), AnyLoc) ?? since this is the value we use for @pure
+  /* Even though the effect for @pure is (StoreLoc(), AssignLoc(), AnyLoc), here we use
+   * the real bottom. The reason is that the EffectChecker uses this as the initial value
+   * when computing the effect of a method.
+   */
+  val bottom = (StoreLoc(), AssignLoc(), LocSet()) 
   val top = (StoreAny, AssignAny(AnyLoc), AnyLoc)
 
   /**
