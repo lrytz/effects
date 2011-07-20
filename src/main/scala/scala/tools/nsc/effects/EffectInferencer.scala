@@ -192,12 +192,12 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
            *  - `transOwner` is the method symbol
            *  - `transTyper` is the typer for the method body
            */
-          val (transOwner, transTyper) = atOwner(tree.symbol)((currentOwner, localTyper))
+          val rhsTyper = atOwner(sym)(localTyper)
           
           // A typer on a DefDef is only works correctly after entering the parameters.
           // The same is done in `typedDefDef` in the typer.
-          transTyper.reenterTypeParams(tparams)
-          transTyper.reenterValueParams(vparamss)
+          rhsTyper.reenterTypeParams(tparams)
+          rhsTyper.reenterValueParams(vparamss)
 
           /**
            * If "tt" was inferred there might be a wrong effect annotation.
@@ -221,14 +221,14 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
 
           val tp = sym.tpe // don't move this valdef before the `updateEffect` above!
           if (inferE || inferT)
-            sym.updateInfo(mkLazyType(sym => {
+            sym.updateInfo(mkLazyType(_ => {
 
               val refinedType =
-                if (inferT) computeType(sym, rhs, tp, transTyper, transOwner, unit)
+                if (inferT) computeType(rhs, tp, rhsTyper, sym, unit)
                 else tp
 
               val annotType =
-                if (inferE) typeWithEffect(refinedType, computeEffect(sym, rhs, transTyper, transOwner, unit))
+                if (inferE) typeWithEffect(refinedType, computeEffect(rhs, rhsTyper, sym, unit))
                 else refinedType
 
               // updateInfo removes the lazy type from the type history
@@ -236,7 +236,7 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
             }))
 
         case ValDef(_, _, tt @ TypeTree(), rhs) =>
-          val (transOwner, transTyper) = atOwner(tree.symbol)((currentOwner, localTyper))
+          val rhsTyper = atOwner(sym)(localTyper)
 
           // at typer phase so that lazy effect types don't get forced yet.
           val (getter, setter) = atPhase(currentRun.typerPhase)(sym.getter(sym.owner), sym.setter(sym.owner))
@@ -251,13 +251,13 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
 
             val fieldTpe = sym.tpe
             sym.updateInfo(mkLazyType(_ => {
-              sym.updateInfo(computeType(sym, rhs, fieldTpe, transTyper, transOwner, unit))
+              sym.updateInfo(computeType(rhs, fieldTpe, rhsTyper, sym, unit))
             }))
 
             if (getter != NoSymbol) {
               val getterTpe = getter.tpe
               getter.updateInfo(mkLazyType(_ => {
-                val refinedType = computeType(sym, rhs, getterTpe, transTyper, transOwner, unit)
+                val refinedType = computeType(rhs, getterTpe, rhsTyper, sym, unit)
                 val getterType = typeWithEffect(refinedType, getterEffect(getter))
                 getter.updateInfo(getterType)
               }))
@@ -267,7 +267,7 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
               val setterTpe = setter.tpe
               setter.updateInfo(mkLazyType(_ => {
                 val MethodType(List(arg), res) = setterTpe
-                val newArg = setter.newSyntheticValueParam(computeType(sym, rhs, arg.tpe, transTyper, transOwner, unit))
+                val newArg = setter.newSyntheticValueParam(computeType(rhs, arg.tpe, rhsTyper, sym, unit))
                 val setterType = typeWithEffect(MethodType(List(newArg), res), setterEffect(setter))
                 setter.updateInfo(setterType)
               }))

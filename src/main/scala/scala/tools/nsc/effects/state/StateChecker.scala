@@ -23,8 +23,8 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
                   sequence,
                   mkElem}
 
-  override def newEffectTraverser(tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit): EffectTraverser =
-    new StateTraverser(tree, EnvMap(), typer, owner, unit)
+  override def newEffectTraverser(rhs: Tree, rhsTyper: Typer, sym: Symbol, unit: CompilationUnit): EffectTraverser =
+    new StateTraverser(rhs, EnvMap(), rhsTyper, sym, unit)
 
 
   trait Env {
@@ -114,12 +114,12 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
   case object AnyEnv extends Env
 
   
-  def computeEffect(tree: Tree, env: Env, typer: Typer, owner: Symbol, unit: CompilationUnit): Elem = {
-    new StateTraverser(tree, env, typer, owner, unit).compute()
+  def subtreeEffect(tree: Tree, env: Env, localTyper: Typer, sym: Symbol, unit: CompilationUnit): Elem = {
+    new StateTraverser(tree, env, localTyper, sym, unit).compute()
   }
 
-  class StateTraverser(tree: Tree, env: Env, typer: Typer, owner: Symbol, unit: CompilationUnit) extends EffectTraverser(tree, typer, owner, unit) {
-    def computeEffect(tree: Tree, newEnv: Env) = StateChecker.this.computeEffect(tree, newEnv, typer, owner, unit)
+  class StateTraverser(rhs: Tree, env: Env, rhsTyper: Typer, sym: Symbol, unit: CompilationUnit) extends EffectTraverser(rhs, rhsTyper, sym, unit) {
+    def subtreeEffect(tree: Tree, newEnv: Env) = StateChecker.this.subtreeEffect(tree, newEnv, rhsTyper, sym, unit)
 
     override def traverse(tree: Tree) {
       tree match {
@@ -127,10 +127,10 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
           
         
         case Assign(lhs, rhs) =>
-          val lhsEffect = computeEffect(lhs, env)
+          val lhsEffect = subtreeEffect(lhs, env)
           val lhsEnv = env.applyEffect(lhsEffect)
           
-          val rhsEffect = computeEffect(rhs, lhsEnv)
+          val rhsEffect = subtreeEffect(rhs, lhsEnv)
           val rhsEnv = lhsEnv.applyEffect(rhsEffect)
 
           val parts = sequence(lhsEffect, rhsEffect)

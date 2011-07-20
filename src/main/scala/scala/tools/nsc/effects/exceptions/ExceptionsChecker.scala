@@ -77,12 +77,12 @@ class ExceptionsChecker(val global: Global) extends EffectChecker[ExceptionsLatt
    * on a sub-tree of tree currently being traversed, and that outer tree went through `refine`
    * before getting into the traverser.
    */
-  def computeEffect(tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit): Elem = {
+  def subtreeEffect(tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit): Elem = {
     newEffectTraverser(tree, typer, owner, unit).compute()
   }
 
   class ExceptionsTraverser(tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit) extends EffectTraverser(tree, typer, owner, unit) {
-    def computeEffect(tree: Tree) = ExceptionsChecker.this.computeEffect(tree, typer, owner, unit)
+    def subtreeEffect(tree: Tree) = ExceptionsChecker.this.subtreeEffect(tree, typer, owner, unit)
     
     override def traverse(tree: Tree) {
       tree match {
@@ -91,7 +91,7 @@ class ExceptionsChecker(val global: Global) extends EffectChecker[ExceptionsLatt
           add(List(expr.tpe))
 
         case Try(body, catches, finalizer) =>
-          val bodyEff = computeEffect(body)
+          val bodyEff = subtreeEffect(body)
           var mask: Elem = lattice.bottom
           var catchEff: Elem = lattice.bottom
           for (CaseDef(pat, guard, body) <- catches) {
@@ -104,10 +104,10 @@ class ExceptionsChecker(val global: Global) extends EffectChecker[ExceptionsLatt
                 ()
             }
             // @TODO guards are expected to be effect-free (assert that!)
-            catchEff = lattice.join(catchEff, computeEffect(body))
+            catchEff = lattice.join(catchEff, subtreeEffect(body))
           }
           val bodyMasked = lattice.mask(bodyEff, mask)
-          val finEff = computeEffect(finalizer)
+          val finEff = subtreeEffect(finalizer)
           add(bodyMasked)
           add(catchEff)
           add(finEff)

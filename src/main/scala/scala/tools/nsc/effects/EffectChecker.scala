@@ -296,13 +296,13 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
           atOwner(td.symbol) {
             // @TOOD: like in the EffectInferencer, don't we have to do `reenterTypeParams` and `reenterValueParams`?
             // because `checkDefDef` calls `refine`, which does the re-type-checking thing. => test it!
-            checkDefDef(td, localTyper, currentOwner, unit)
+            checkDefDef(td, localTyper, unit)
           }
 
         case vd@ValDef(_, _, _, rhs) if !rhs.isEmpty =>
           val td = super.transform(vd).asInstanceOf[ValDef]
           atOwner(td.symbol) {
-            checkValDef(td, localTyper, currentOwner, unit)
+            checkValDef(td, localTyper, unit)
           }
 
         case _ =>
@@ -319,7 +319,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    *
    * @TODO: do nothing if return type is "Unit", just return the DefDef
    */
-  def checkDefDef(dd: DefDef, typer: Typer, owner: Symbol, unit: CompilationUnit): DefDef = {
+  def checkDefDef(dd: DefDef, ddTyper: Typer, unit: CompilationUnit): DefDef = {
     val sym = dd.symbol
     // @TODO: can we assert(owner == sym)? it should probably be, right? see call in the `Checker` above.
 
@@ -328,7 +328,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
 
     if (!inferEffect(sym)) {
       // Check or infer the latent effect
-      val rhsEff = computeEffect(sym, dd.rhs, typer, owner, unit)
+      val rhsEff = computeEffect(dd.rhs, ddTyper, sym, unit)
       if (!lattice.lte(rhsEff, symEff))
         effectError(dd, symEff, rhsEff)
     }
@@ -345,7 +345,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
         transformed.getOrElse(sym, dd.rhs)
       } else {
         // Check or infer the return type
-        val rhs1 = refine(sym, dd.rhs, typer, owner, unit)
+        val rhs1 = refine(dd.rhs, ddTyper, sym, unit)
         checkRefinement(dd, rhs1.tpe, symTp)
         rhs1
       }
@@ -362,7 +362,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     treeCopy.DefDef(dd, dd.mods, dd.name, dd.tparams, dd.vparamss, dd.tpt, refinedRhs)
   }
 
-  def checkValDef(vd: ValDef, typer: Typer, owner: Symbol, unit: CompilationUnit): ValDef = {
+  def checkValDef(vd: ValDef, vdTyper: Typer, unit: CompilationUnit): ValDef = {
     val sym = vd.symbol
     // @TODO: can we assert(owner == sym)?
 
@@ -374,7 +374,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
         transformed.getOrElse(sym, vd.rhs)
       } else {
         // Check or infer the return type
-        val rhs1 = refine(sym, vd.rhs, typer, owner, unit)
+        val rhs1 = refine(vd.rhs, vdTyper, sym, unit)
         checkRefinement(vd, rhs1.tpe, symTp)
         rhs1
       }
@@ -418,20 +418,36 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * Computes the (refined) type of `rhs` and returns the type
    * type `origTp` with this refined result type, while keeping
    * existing annotations.
+   * 
+   * @param rhs        The tree for which to compute the type. It has to be the righthand
+   *                   side of a DefDef or ValDef tree
+   * @param origTp
+   * @param rhsTyper   The local typer which has the right context for typing `rhs`
+   * @param sym        The symbol of the definition of `rhs`
+   * @param unit  
    */
-  def computeType(sym: Symbol, rhs: Tree, origTp: Type, typer: Typer, owner: Symbol, unit: CompilationUnit): Type = {
+  def computeType(rhs: Tree, origTp: Type, rhsTyper: Typer, sym: Symbol, unit: CompilationUnit): Type = {
     // computeType can be called multiple times (value, getter, setter)
-    val refined = refine(sym, rhs, typer, owner, unit)
+    val refined = refine(rhs, rhsTyper, sym, unit)
 
-    val packed = typer.packedType(refined, sym)
-    val widened = typer.namer.widenIfNecessary(sym, packed, WildcardType)
+    val packed = rhsTyper.packedType(refined, sym)
+    val widened = rhsTyper.namer.widenIfNecessary(sym, packed, WildcardType)
 
     onResultType(origTp, tp => widened.withAnnotations(tp.annotations))
   }
 
-  def refine(sym: Symbol, tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit): Tree = {
+  /**
+   * Pass the tree `rhs` through the RefineTransformer, if it has not yet been transformed
+   * before and stored in the `transformed` map.
+   * 
+   * @param rhs        The `rhs` tree of a DefDef or ValDef
+   * @param rhsTyper   A typer instance with the right context for typing `rhs`
+   * @param sym        The symbol of the definition of `rhs`
+   * @param unit
+   */
+  def refine(rhs: Tree, rhsTyper: Typer, sym: Symbol, unit: CompilationUnit): Tree = {
     transformed.getOrElseUpdate(sym, {
-      val refiner = new RefineTransformer(unit, typer, owner, tree)
+      val refiner = new RefineTransformer(rhs, rhsTyper, sym, unit)
       refiner.refine()
     })
   }
@@ -464,12 +480,12 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * 
    * A special treatment is given to anonymous function trees, see comment below.
    */
-  class RefineTransformer(unit: CompilationUnit, typer: Typer, owner: Symbol, tree: Tree) extends TypingTransformer(unit) {
-    localTyper = typer
-    currentOwner = owner
+  class RefineTransformer(rhs: Tree, rhsTyper: Typer, sym: Symbol, unit: CompilationUnit) extends TypingTransformer(unit) {
+    localTyper = rhsTyper
+    currentOwner = sym
 
     def refine(): Tree = {
-      val refined = transform(tree)
+      val refined = transform(rhs)
       val untyped = new ResetTransformer(untypeTargets).reset(refined)
 
       val res = localTyper.typed(untyped)
@@ -540,13 +556,11 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
        * of the tree up to that `Function` node to take in account its more specific type.
        */
       case Function(params, body) =>
-        val sym = tree.symbol
-        // @TODO: should we not use `sym` as owner? Transformer class does `atOwner(tree.symbol)` before traversing the body.
-        // also, when calling `refine`, we should probably have that `sym` is always the same as `owner`.
-        // also, `atOwner` in a TypingTransformer updates the localTyper, which is actually done for function trees. but here,
-        // we just pass in the current typer, which is a different one!!!
-        // also, reenterType/ValueParams? see EffectInferencer, comment in checkDefDef...
-        val refinedBody = EffectChecker.this.refine(sym, body, localTyper, owner, unit)
+        val funSym = tree.symbol
+        val funTyper = atOwner(funSym)(localTyper)
+        
+        // @TOOD do we need to do reenterType/ValueParams? see EffectInferencer, comment in checkDefDef...
+        val refinedBody = EffectChecker.this.refine(body, funTyper, funSym, unit)
 
         /**
          * Concequence of Effects being TypeConstraints
@@ -556,13 +570,12 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
          * Therefore, remove effect annotations
          */
 
-        val restpe = localTyper.packedType(refinedBody, tree.symbol).deconst
+        val restpe = localTyper.packedType(refinedBody, funSym).deconst
         val funtpe =
           if (restpe == resultTypeArgument(tree.tpe)) tree.tpe
           else functionTypeWithResult(tree.tpe, restpe)
 
-        // @TODO: again, the owner should probably be `sym`, right? 
-        val eff = computeEffect(sym, refinedBody, localTyper, owner, unit)
+        val eff = computeEffect(refinedBody, funTyper, funSym, unit)
         // @TODO the owner of the newly created `<refinement>` class symbol is `currentClass`. not sure if this is correct..
         val refinedType = functionTypeWithEffect(funtpe, eff, currentClass, tree.pos)
         if (refinedType != funtpe) {
@@ -683,21 +696,26 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * has as symbol "C.bar". However, after calling `refine`, that Select
    * tree gets the more precise symbol `<refinement>.baz`, and `computeEffect`
    * will find that applying this method is pure.
+   * 
+   * @param rhs        The `rhs` tree of a DefDef or ValDef
+   * @param rhsTyper   A typer instance with the right context for typing `rhs`
+   * @param sym        The symbol of the definition of `rhs`
+   * @param unit
    */
-  def computeEffect(sym: Symbol, tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit) = {
-    val refinedTree = refine(sym, tree, typer, owner, unit)
-    newEffectTraverser(refinedTree, typer, owner, unit).compute()
+  def computeEffect(rhs: Tree, rhsTyper: Typer, sym: Symbol, unit: CompilationUnit) = {
+    val refinedTree = refine(rhs, rhsTyper, sym, unit)
+    newEffectTraverser(refinedTree, rhsTyper, sym, unit).compute()
   }
 
-  def newEffectTraverser(tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit): EffectTraverser =
-    new EffectTraverser(tree, typer, owner, unit)
+  def newEffectTraverser(rhs: Tree, rhsTyper: Typer, sym: Symbol, unit: CompilationUnit): EffectTraverser =
+    new EffectTraverser(rhs, rhsTyper, sym, unit)
 
-  class EffectTraverser(tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit) extends Traverser {
+  class EffectTraverser(rhs: Tree, rhsTyper: Typer, sym: Symbol, unit: CompilationUnit) extends Traverser {
     override def apply[T <: Tree](t: T): T = abort("apply should not be called")
 
     def compute(): Elem = {
       acc = lattice.bottom
-      traverse(tree)
+      traverse(rhs)
       acc
     }
 
@@ -777,9 +795,9 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     }
 
     protected def computeApplicationEffect(fun: Tree, targs: List[Tree] = Nil, argss: List[List[Tree]] = Nil) = {
-      var res = applicationEffect(fun, targs, argss, typer.context1)
+      var res = applicationEffect(fun, targs, argss, rhsTyper.context1)
       for (t <- appEffectTransformers) {
-        val trans = t(res, fun, targs, argss, typer.context1)
+        val trans = t(res, fun, targs, argss, rhsTyper.context1)
         res = trans // t(res, fun, targs, argss, typer.context1)
       }
       res
