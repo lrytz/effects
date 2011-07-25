@@ -334,7 +334,6 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    */
   def checkDefDef(dd: DefDef, ddTyper: Typer, unit: CompilationUnit): DefDef = {
     val sym = dd.symbol
-    // @TODO: can we assert(owner == sym)? it should probably be, right? see call in the `Checker` above.
 
     val symEff = fromAnnotation(sym.tpe).getOrElse(abort("no latent effect annotation on " + sym))
     val symTp = sym.tpe.finalResultType // @TODO: what about type parameters? def f[T](x: T): T = x
@@ -382,7 +381,6 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    */
   def checkValDef(vd: ValDef, vdTyper: Typer, unit: CompilationUnit): ValDef = {
     val sym = vd.symbol
-    // @TODO: can we assert(owner == sym)?
 
     val symTp = sym.tpe
 
@@ -832,7 +830,9 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
 
   /**
    * Compute the effect of a function application. This method exists outside the
-   * EffectTraverser so that it can be easily overridden by concrete checkers.
+   * EffectTraverser so that it can be easily overridden by concrete checkers. A simple
+   * effect checker might only override this method and not even implement a custom
+   * EffectTraverser.
    */
   def applicationEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context)  = {
     val sym = fun.symbol

@@ -20,7 +20,7 @@ trait PCTracking[L <: CompleteLattice] { this: EffectChecker[L] =>
    *
    *  - fun: "x.y.foo"                 tree
    *  - targs: Nil                     trees
-   *  - argss: List(List("a"))         trees
+   *  - argss: List(List(new B))       trees
    *
    *  - pcparam: a                     symbol
    *  - pcfun: A.bar                   symbol
@@ -58,6 +58,7 @@ trait PCTracking[L <: CompleteLattice] { this: EffectChecker[L] =>
                 // @TODO: overloads.. there should be a more symbolic way to do this. asSeenFrom?
                 val sym = arg.tpe.member(pcfun.name)
                 res = lattice.join(e, fromAnnotation(sym.tpe).getOrElse(lattice.top))
+                // @TODO: need to go recursively into @PC annotations, keep track of visited ones (-> fixpoint)!!!
             }
           }
         }
