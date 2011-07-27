@@ -86,6 +86,8 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   type Elem = lattice.Elem
 
   /**
+   * @implement
+   * 
    * Wee need to know which annotations denote the effects of this system.
    * The inference algorithm needs to be able to remove intermediate
    * effect annotations, it removes annotations that have a type symbol
@@ -101,12 +103,17 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    */
 
   /**
+   * @implement
+   * 
    * @TODO: treat `@pure` here, i.e. let every subclass decide how to handle it?
    * or assign `lattice.bottom` directly in the EffectInferencer?
    */
   def fromAnnotation(annots: List[AnnotationInfo]): Option[Elem]
   def fromAnnotation(tpe: Type): Option[Elem] = fromAnnotation(tpe.finalResultType.annotations)
 
+  /**
+   * @implement
+   */
   def toAnnotation(elem: Elem): List[AnnotationInfo]
 
   val inferAnnotation = definitions.getClass("scala.annotation.effects.infer")
@@ -723,6 +730,13 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     newEffectTraverser(refinedTree, rhsTyper, sym, unit).compute()
   }
 
+  /**
+   * @implement This method can be overridden by concrete effect checkers.
+   * 
+   * Concrete effect checkers might implement a custom subclass of `EffectTraverser`
+   * for computing effects of `rhs` trees. This factory method is called to obtain
+   * EffectChecker instances.
+   */
   def newEffectTraverser(rhs: Tree, rhsTyper: Typer, sym: Symbol, unit: CompilationUnit): EffectTraverser =
     new EffectTraverser(rhs, rhsTyper, sym, unit)
 
@@ -753,26 +767,21 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
          *  - lazy vals (vals are in constructor, but lazy not (?))
          */
         case Apply(_, _) =>
-          val (fun, targs, argss) = decomposeApply(tree)
-          traverseQual(fun)
-          traverseTrees(targs)
-          for (args <- argss) traverseTrees(args)
-          add(computeApplicationEffect(fun, targs, argss))
 
         case TypeApply(_, _) =>
-          val (fun, targs, Nil) = decomposeApply(tree)
-          traverseQual(fun)
-          traverseTrees(targs)
-          add(computeApplicationEffect(fun, targs))
+          handleApplication(tree)
 
         case Select(qual, _) =>
-          traverse(qual)
           if (tree.symbol.isMethod)
-            add(computeApplicationEffect(tree))
+            handleApplication(tree)
+          else
+            traverse(qual)
 
         case Ident(_) =>
-          if (tree.symbol.isMethod)
-            add(computeApplicationEffect(tree))
+          if (tree.symbol.isMethod) {
+            // a parameterless local method is applied using an `Ident` tree.
+            handleApplication(tree)
+          }
 
         // @TODO: correctly treat pattern matches. E.g. in "case C(a, b)", the case has the form
         //   CaseDef(Apply(TypeTree(), args), _, _)
@@ -810,38 +819,66 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       }
     }
 
+    /**
+     * @implement This method can be overridden by effect traversers.
+     * 
+     * This methods decomposes the `tree`, which is a function application, into three
+     * parts: the function, the type arguments, and the value argumentss. It traverses
+     * all these parts (calling `add` on their effects) and finally adds the latent effect
+     * of the function using `computeApplicationEffect`.
+     */
+    protected def handleApplication(tree: Tree) = {
+      val (fun, targs, argss) = decomposeApply(tree)
+      traverseQual(fun)
+      traverseTrees(targs)
+      for (args <- argss) traverseTrees(args)
+      add(computeApplicationEffect(fun, targs, argss))
+    }
+    
+    /**
+     * @implement This method can be overridden by effect traversers.
+     * 
+     * Extracts the latent effect of the function being applied and adapts it using
+     * `adaptLatentEffect` and `adaptToPolymorphism`.
+     */
     protected def computeApplicationEffect(fun: Tree, targs: List[Tree] = Nil, argss: List[List[Tree]] = Nil) = {
-      var res = applicationEffect(fun, targs, argss, rhsTyper.context1)
-      for (t <- appEffectTransformers) {
-        val trans = t(res, fun, targs, argss, rhsTyper.context1)
-        res = trans // t(res, fun, targs, argss, typer.context1)
-      }
-      res
+      val latent = latentEffect(fun, targs, argss, rhsTyper.context1)
+      val adapted = adaptLatentEffect(latent, fun, targs, argss, rhsTyper.context1)
+      adaptToEffectPolymorphism(adapted, fun, targs, argss, rhsTyper.context1)
     }
   }
 
- /**
-  * PCTracking adapts the effect of an application expression.
-  */
-  def addAppEffectTransformer(f: (Elem, Tree, List[Tree], List[List[Tree]], Context) => Elem) {
-    appEffectTransformers += f
+  /**
+   * @implement This method exists outside the EffectTraverser so that it can be
+   * easily overridden by concrete checkers. A simple effect checker might only
+   * override this method and not even implement a custom EffectTraverser. 
+   * 
+   * Returns the latent effect of a function application.
+   */
+  def latentEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context) = {
+    val sym = fun.symbol
+    val eff = fromAnnotation(sym.tpe)
+    eff.getOrElse(lattice.top)
   }
-  private val appEffectTransformers = m.ListBuffer[(Elem, Tree, List[Tree], List[List[Tree]], Context) => Elem]()
 
   /**
-   * Compute the effect of a function application. This method exists outside the
-   * EffectTraverser so that it can be easily overridden by concrete checkers. A simple
-   * effect checker might only override this method and not even implement a custom
-   * EffectTraverser.
+   * @implement This method can be overridden by concrete effect checkers. It allows
+   * to adapt / change / customize the latent effect, which is obtained from a function's
+   * effect annotation.
    */
-  def applicationEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context)  = {
-    val sym = fun.symbol
-    val eff = fromAnnotation(sym.tpe) // will complete lazy type if necessary
-    // println("effect of applying "+ sym +": "+ eff)
-    eff.getOrElse(lattice.top) // @TODO: top by default?
+  def adaptLatentEffect(eff: Elem, fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context): Elem = {
+    eff
   }
-
-
+  
+ /**
+  * This method is overridden by PCTracking, which will adapt the effect of an application
+  * expression mainly in two ways:
+  *  - remove the effect if it's a parameter call
+  *  - add effects caused by `@pc` annotations on `fun`
+  */
+  def adaptToEffectPolymorphism(latent: Elem, fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context): Elem = {
+    latent
+  }
 
   /**
    * *************

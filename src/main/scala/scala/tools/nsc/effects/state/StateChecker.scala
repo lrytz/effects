@@ -7,14 +7,14 @@ import pc._
 
 class StateChecker(val global: Global) extends EffectChecker[StateLattice] with ConvertAnnots with PCTracking[StateLattice] {
   import global._
-  import analyzer.Typer
+  import analyzer.{Typer, Context}
 
   val runsAfter = List("stateInferencer")
   override val runsBefore = List("pickler")
   val phaseName = "stateChecker"
 
 
-    val lattice = new StateLattice {
+  val lattice = new StateLattice {
     val global: StateChecker.this.global.type = StateChecker.this.global
   }
   import lattice.{Locality, AnyLoc, LocSet,
@@ -133,25 +133,25 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
 
     override def traverse(tree: Tree) {
       tree match {
-        case Apply(_, _) =>
-          handleApplication(tree)
-          
-        case TypeApply(_, _) =>
-          handleApplication(tree)
-          
+        // Apply, TypeApply: handled ok in superclass (EffectTraverser, call to handleApplication)
+
         case Select(_, _) =>
           if (tree.symbol.isMethod) {
             // applications to parameterless methods are `Select` trees, e.g. getters
             handleApplication(tree)
           } else {
-            // TODO: handle selection of other things. (like what? objects, for instnace)
+            // TODO: handle selection of other things. (like what? objects, for instance)
           }
 
         case Ident(name) =>
-          // an Ident tree can refer to parameters, local values or packages in the `root` package.
           val sym = tree.symbol
-          if (sym.owner.isRootPackage) mkElem(AnyLoc)
-          else mkElem(LocSet(SymLoc(tree.symbol))) // @TODO: is this OK for local objects?
+          if (sym.isMethod) {
+            handleApplication(tree)
+          } else {
+            // an Ident tree can refer to parameters, local values or packages in the `root` package.
+            if (sym.owner.isRootPackage) mkElem(AnyLoc)
+            else mkElem(LocSet(SymLoc(tree.symbol))) // @TODO: is this OK for local objects? maybe instead of putting SymLoc for everything else, make specific tests for params, locals to create a SymLoc, and AnyLoc otherwise.
+          }
 
 
         case Assign(lhs, rhs) =>
@@ -178,7 +178,7 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
         
     }
 
-    def handleApplication(tree: Tree) = {
+    override def handleApplication(tree: Tree) = {
       val (fun, targs, argss) = decomposeApply(tree)
           
       val funEff = subtreeEffect(fun, env)
@@ -202,93 +202,102 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
       // build a map from the function's parameter symbols to the localities of the arguments
       val flatParams = fun.symbol.tpe.paramss.flatten
 
+      val locMap: Map[Location, Locality] = Map(ThisLoc(fun.symbol.owner) -> funLoc) ++ ((flatParams map SymLoc) zip flatArgLocs)
       
-      val locMap: Map[Location, Locality] = Map((ThisLoc(fun.symbol.owner) -> funLoc)) ++ ((flatParams map SymLoc) zip flatArgLocs)
-      val annots = fun.symbol.tpe.finalResultType.annotations
-      val latentEffect = mapLocalities(fromAnnotation(annots).getOrElse(lattice.top), locMap)
-      
-      // todo: change localities! this -> receiver's locality, param symbol localities to argument localities
-      
-
-      val applyEffects = new collection.mutable.ListBuffer[Elem]()
-
-      pcFromAnnotations(annots) match {
-        case None | Some(AnyPC) =>
-          // @TODO all effects from all methods reachable trough the parameters. (also, the
-          // same thing has to be done in PCTracking, method anyParamCall)
-          applyEffects += lattice.top
-          
-        case Some(PC(calls)) =>
-          for (PCInfo(param, pcfun, pcargtpss) <- calls) {
-            
-            
-            
-            /* - find argument matching `param`
-             * - find the argument's type
-             * - find the type of `pcfun` as seen from the argumetnt type
-             * - look at the effect
-             * - replace the `this` locality with the argument locality
-             * - replace all argument localities with `AnyLoc`
-             *
-             * - find nested PC's (recursively). In those, all localities are AnyLoc.
-             *
-             */
-          }
-      }
-
-    }
-    
-    
-    def mapLocalities(eff: Elem, map: Map[Location, Locality]) = {
-      val store = eff._1 match {
-        case StoreAny => StoreAny
-        case StoreLoc(effs) =>
-          ((StoreLoc(): Store) /: effs) {
-            case (store, (in, from)) =>
-              val mappedFrom = mapLocality(from, map)
-              var res = store
-              map.getOrElse(in, nonMappedLocality(in)) match {
-                case AnyLoc => StoreAny
-                case LocSet(locs) =>
-                  for (loc <- locs) { res = res.include(loc, mappedFrom) }
-              }
-              res
-          }
-      }
-      
-      val assign = eff._2 match {
-        case AssignAny(to) => AssignAny(mapLocality(to, map))
-        case AssignLoc(strong, weak) =>
-          val mapStrong = strong.map(e => (e._1, mapLocality(e._2, map)))
-          val mapWeak = weak.map(e => (e._1, mapLocality(e._2, map)))
-          AssignLoc(mapStrong, mapWeak)
-      }
-      
-      val loc = mapLocality(eff._3, map)
-      
-      (store, assign, loc)
-    }
-    
-    def mapLocality(loc: Locality, map: Map[Location, Locality]) = loc match {
-      case AnyLoc => AnyLoc
-      case LocSet(locs) =>
-        ((LocSet(): Locality) /: locs)((set, loc) => joinLocality(set, map.getOrElse(loc, nonMappedLocality(loc))))
-    }
-    
-    def nonMappedLocality(loc: Location): Locality = loc match {
-      case SymLoc(s) =>
-        if (isInScope(s)) LocSet(loc)
-        else AnyLoc
-      case ThisLoc(s) =>
-        if (isInScope(s)) LocSet(loc)
-        else AnyLoc
-      case Fresh =>
-        LocSet(loc)
-    }
-    
-    def isInScope(s: Symbol): Boolean = true
+      withMap(locMap) { add(computeApplicationEffect(fun, targs, argss)) }
+    }    
     
   }
+  
+  private var currentMap: Map[Location, Locality] = null
+  def withMap[T](map: Map[Location, Locality])(op: => T): T = {
+    val savedMap = currentMap
+    currentMap = map
+    val res = op
+    currentMap = savedMap
+    op
+  }
+
+  override def adaptLatentEffect(eff: Elem, fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context): Elem = {
+    mapLocalities(eff, currentMap)
+  }
+    
+  override def adaptPcEffect(eff: Elem, pc: PCInfo, fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context): Elem = {
+    /* Example: consider we treat the application of method `foo`, e.g.
+     * 
+     *   qual.foo(arg)
+     * 
+     * where
+     *
+     *   def foo(a: A) @pc(a.bar(_))
+     *   class A { def bar(b: B) @mod(this) @mod(b) }
+     * 
+     * Then the arguments to `adaptPcEffect` are
+     *   eff   = @mod(this) @mod(b)
+     *   pc    = PCInfo(a, bar)
+     *   fun   = qual.foo
+     *   argss = (arg)
+     * 
+     * We have to map the localities of `@mod(this) @mod(b)`. The correct
+     * locality map to apply is the following:
+     * 
+     *   this -> { localityOf(arg) }
+     *   b    -> AnyLoc (or, just don't put b in the map)
+     */
+    val paramLoc = SymLoc(pc.param)
+    // @TODO: fix when enabling PC calls on `this`
+    val pcMap: Map[Location, Locality] = Map(ThisLoc(pc.fun.owner) -> currentMap.getOrElse(paramLoc, abort("parameter not in locations map: "+ paramLoc +", "+ currentMap)))
+    mapLocalities(eff, pcMap)
+  }
+
+  def mapLocalities(eff: Elem, map: Map[Location, Locality]) = {
+    val store = eff._1 match {
+      case StoreAny => StoreAny
+      case StoreLoc(effs) =>
+        ((StoreLoc(): Store) /: effs) {
+          case (store, (in, from)) =>
+            val mappedFrom = mapLocality(from, map)
+            var res = store
+            map.getOrElse(in, nonMappedLocality(in)) match {
+              case AnyLoc => StoreAny
+              case LocSet(locs) =>
+                for (loc <- locs) { res = res.include(loc, mappedFrom) }
+            }
+            res
+        }
+    }
+    
+    val assign = eff._2 match {
+      case AssignAny(to) => AssignAny(mapLocality(to, map))
+      case AssignLoc(strong, weak) =>
+        val mapStrong = strong.map(e => (e._1, mapLocality(e._2, map)))
+        val mapWeak = weak.map(e => (e._1, mapLocality(e._2, map)))
+        AssignLoc(mapStrong, mapWeak)
+    }
+    
+    val loc = mapLocality(eff._3, map)
+      
+    (store, assign, loc)
+  }
+    
+  def mapLocality(loc: Locality, map: Map[Location, Locality]) = loc match {
+    case AnyLoc => AnyLoc
+    case LocSet(locs) =>
+      ((LocSet(): Locality) /: locs)((set, loc) => joinLocality(set, map.getOrElse(loc, nonMappedLocality(loc))))
+  }
+    
+  def nonMappedLocality(loc: Location): Locality = loc match {
+    case SymLoc(s) =>
+      if (isInScope(s)) LocSet(loc)
+      else AnyLoc
+    case ThisLoc(s) =>
+      if (isInScope(s)) LocSet(loc)
+      else AnyLoc
+    case Fresh =>
+      LocSet(loc)
+  }
+   
+  def isInScope(s: Symbol): Boolean = true
 }
 
 

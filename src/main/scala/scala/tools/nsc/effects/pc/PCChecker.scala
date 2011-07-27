@@ -41,7 +41,7 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
       List(AnnotationInfo(pcClass.tpe, typedArgs, List()))
   }
   
-  override def applicationEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context) = {
+  override def latentEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context) = {
     var acc: Elem = lattice.bottom
     val currentMethod = ctx.owner.enclMethod
 

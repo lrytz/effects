@@ -1,7 +1,7 @@
 package scala.tools.nsc.effects
 package pc
 
-trait PCTracking[L <: CompleteLattice] { this: EffectChecker[L] =>
+trait PCTracking[L <: CompleteLattice] extends EffectChecker[L] { /* this: EffectChecker[L] => */
   import global._
   import analyzer.Context
 
@@ -11,27 +11,24 @@ trait PCTracking[L <: CompleteLattice] { this: EffectChecker[L] =>
   import pcCommons._
   import pcLattice.{PC, PCInfo, AnyPC}
 
-
-    /*
-   * @paramCall(a.bar(~: String))
-   * def foo(a: A) { a.bar(s) }
-   *
-   * x.y.foo(new B)
-   *
-   *  - fun: "x.y.foo"                 tree
-   *  - targs: Nil                     trees
-   *  - argss: List(List(new B))       trees
-   *
-   *  - pcparam: a                     symbol
-   *  - pcfun: A.bar                   symbol
-   *  - pcargtpss: List(List(String))  types
-   *
-   * need to find out which of the "argss" corresponds to "pcparam"
-   *
-   */
-
-  addAppEffectTransformer((e: Elem, fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context) => {
-    var res = e
+  
+  override def adaptToEffectPolymorphism(latent: Elem, fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context): Elem = {
+    
+    /* If the receiver of the function is a parameter then it's a parameter call. Therefore
+     * we can ignore the effect, it is represented by the @pc annotation (which is already
+     * present from the PCChecker phase). Example:
+     * 
+     *   def foo(a: A): B @pc(a.bar) = a.bar
+     * 
+     * The side-effect of the application `a.bar` does not have to be annotated, it's covered
+     * by the `@pc(a.bar)` annotation.
+     */
+    var res = fun match {
+      case Select(id @ Ident(_), _) if (isParam(id.symbol, ctx.owner.enclMethod)) =>
+        lattice.bottom
+      case _ =>
+        latent
+    }
 
     val flatArgss = argss.flatten
     val flatParamss = fun.symbol.tpe.paramss.flatten
@@ -41,30 +38,55 @@ trait PCTracking[L <: CompleteLattice] { this: EffectChecker[L] =>
       case None | Some(AnyPC) =>
         res = lattice.join(res, anyParamCall(flatArgss, ctx))
       case Some(PC(calls)) =>
-        for (PCInfo(param, pcfun, pcargtpss) <- calls) {
+        for (pcInfo @ PCInfo(param, pcfun, pcargtpss) <- calls) {
           if (isParam(param, ctx.owner.enclMethod)) {
-            // the receiver of the paramCall is a parameter in the current context. then we don't
-            // need to consider its effect. example
-            //   def m(a: A) { def n() = a.f(); n() }
-            // in the call to n(), there's a @pc(a.f()), but "a" is a param when calling n.
+            /* The receiver of the paramCall is a parameter in the current context. Then we don't
+             * need to consider its effect, instead the @pc annotation will be forwarded (done by
+             * PCChecker). Example
+             * 
+             *   def m(a: A): R @pc(a.f()) = { def n() = a.f(); n() }
+             * 
+             * In the call to n(), there's a @pc(a.f()), but "a" is a param when calling n.
+             */
             ()
           } else {
+            // @TODO: implement param calls on `this`, i.e. @pc(this.bar())
             val i = flatParamss.indexOf(param)
             assert(i >= 0)
             flatArgss(i) match {
               case id @ Ident(_) if (isParam(id.symbol, ctx.owner.enclMethod)) =>
+                /* The argument expression is an `Ident` to another parameter. Then we don't have
+                 * to expand the pc effect, instead it will be transformed into a pc effect (done
+                 * by the PCChecer). Example
+                 * 
+                 *   def m(a1: A): C @pc(a1.foo) = { a.foo() }
+                 *   def g(a2: A): C @pc(a2.foo) = { m(a1) }
+                 * 
+                 * In the call m(a1), m's @pc effect is not expanded.
+                 */
                 ()
               case arg =>
-                // @TODO: overloads.. there should be a more symbolic way to do this. asSeenFrom?
-                val sym = arg.tpe.member(pcfun.name)
-                res = lattice.join(e, fromAnnotation(sym.tpe).getOrElse(lattice.top))
-                // @TODO: need to go recursively into @PC annotations, keep track of visited ones (-> fixpoint)!!!
+                val funTpe = arg.tpe.memberType(pcfun)
+                val pcEff = fromAnnotation(funTpe).getOrElse(lattice.top)
+                res = lattice.join(res, adaptPcEffect(pcEff, pcInfo, fun, targs, argss, ctx))
             }
           }
         }
     }
     res
-  })
+  }
+
+  /**
+   * @implement This method can be overridden by concrete effect checkers. It allows to adapt /
+   * change / customize effects that have been collected through `@pc` annotations of the
+   * applied function `fun`.
+   * 
+   * By default, it calls calls the method `adaptLatentEffect` defined in `EffectCheckers`.
+   */
+  def adaptPcEffect(eff: Elem, pc: PCInfo, fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context): Elem = {
+    adaptLatentEffect(eff, fun, targs, argss, ctx)
+  }
+  
 
   // @TODO: effect of calling all methods on all types of `args`
   def anyParamCall(args: List[Tree], ctx: Context): Elem =
@@ -76,18 +98,4 @@ trait PCTracking[L <: CompleteLattice] { this: EffectChecker[L] =>
           lattice.top
       }
     })
-
-
-  /**
-   * Detect param calls: they don't have any effect!
-   */
-  addAppEffectTransformer((e: Elem, fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context) => {
-    fun match {
-      case Select(id @ Ident(_), _) if (isParam(id.symbol, ctx.owner.enclMethod)) =>
-        lattice.bottom
-
-      case _ =>
-        e
-    }
-  })
 }
