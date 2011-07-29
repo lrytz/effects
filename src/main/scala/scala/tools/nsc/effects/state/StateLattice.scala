@@ -14,10 +14,10 @@ abstract class StateLattice extends CompleteLattice {
    * the real bottom. The reason is that the EffectChecker uses this as the initial value
    * when computing the effect of a method.
    */
-  val bottom = (StoreLoc(), AssignLoc(), LocSet())
-  val top = (StoreAny, AssignAny(AnyLoc), AnyLoc)
+  val bottom: Elem = (StoreLoc(), AssignLoc(), LocSet())
+  val top: Elem = (StoreAny, AssignAny(AnyLoc), AnyLoc)
 
-  override val pure = (StoreLoc(), AssignLoc(), AnyLoc)
+  override val pure: Elem = (StoreLoc(), AssignLoc(), AnyLoc)
   
   /**
    * Construct effect elements form effects in one domain.

@@ -169,7 +169,7 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
           val lhsEnv = env.applyEffect(lhsEffect)
           
           val rhsEffect = subtreeEffect(rhs, lhsEnv)
-          val rhsEnv = lhsEnv.applyEffect(rhsEffect)
+          // val rhsEnv = lhsEnv.applyEffect(rhsEffect) // not needed
 
           val parts = sequence(lhsEffect, rhsEffect)
           
@@ -182,8 +182,52 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
           val assignEff = mkElem(AssignLoc(lhsLoc, rhsEffect._3, true)) // @TOOD: don't do this if `lhsLoc` and `rhsEffect._3` are fresh
           val resEff = sequence(parts, assignEff)
           add((resEff._1, resEff._2, LocSet())) // no value is returned, so there's no locality
+
+        case Block(stats, expr) =>
+          val (statsEff, statsEnv) = (stats :\ (lattice.bottom, env)) {
+            case (stat, (eff, env)) =>
+              val e = subtreeEffect(stat, env)
+              (sequence(eff, e), env.applyEffect(e))
+          }
           
-        case _ => ()
+          val exprEff = subtreeEffect(expr, statsEnv)
+          add(sequence(statsEff, exprEff))
+
+        case If(cond, thenExpr, elseExpr) =>
+          val condEff = subtreeEffect(cond, env)
+          val condEnv = env.applyEffect(condEff)
+          
+          val thenEff = subtreeEffect(thenExpr, condEnv)
+          val elseEff = subtreeEffect(elseExpr, condEnv)
+          
+          val resEff = sequence(condEff, join(thenEff, elseEff))
+          add(resEff)
+          
+        case New(tpt) =>
+          // no side effects - the constructor call is represented as a separate Apply tree
+          add((StoreLoc(), AssignLoc(), LocSet(Fresh)))
+        
+        case Super(qual, mix) =>
+          add(StoreLoc(), AssignLoc(), LocSet(ThisLoc(tree.symbol)))
+
+        case This(qual) =>
+          add(StoreLoc(), AssignLoc(), LocSet(ThisLoc(tree.symbol)))
+
+        case Literal(c) =>
+          add(StoreLoc(), AssignLoc(), LocSet(Fresh))
+          
+        // @TODO
+        case Try(block, catches, finalizer) =>
+          ()
+        
+        // @TODO
+        case Return(expr) =>
+          ()
+
+        // @TODO: CaseDef, Match etc
+          
+        case _ =>
+          super.traverse(tree)
       }
         
     }
