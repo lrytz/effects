@@ -22,9 +22,9 @@ abstract class StateLattice extends CompleteLattice {
   /**
    * Construct effect elements form effects in one domain.
    */
-  def mkElem(store: Store) = (store, AssignLoc(), LocSet())
-  def mkElem(assign: Assignment) = (StoreLoc(), assign, LocSet())
-  def mkElem(loc: Locality) = (StoreLoc, AssignLoc(), loc)
+  def mkElem(store: Store): Elem = (store, AssignLoc(), LocSet())
+  def mkElem(assign: Assignment): Elem = (StoreLoc(), assign, LocSet())
+  def mkElem(loc: Locality): Elem = (StoreLoc(), AssignLoc(), loc)
 
   /**
    * Join effects, e.g. in
@@ -46,7 +46,7 @@ abstract class StateLattice extends CompleteLattice {
    * The effect is @strongAssign(x, {a, b})
    */
   def sequence(a: Elem, b: Elem) =
-    (joinStore(a._1, b._1), sequenceAssignment(a._2, b._2), joinLocality(a._3, b._3))
+    (joinStore(a._1, b._1), sequenceAssignment(a._2, b._2), b._3)
 
 
   def joinStore(a: Store, b: Store): Store = (a, b) match {

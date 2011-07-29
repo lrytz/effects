@@ -47,7 +47,7 @@ trait ConvertAnnots { this: StateChecker =>
     }
     
     def locList2Locality(l: List[Either[Location, AnyLoc.type]]): Locality = {
-      if (l exists { case Right(_) => true }) AnyLoc
+      if (l.exists(_.isRight)) AnyLoc
       else if (l.isEmpty) LocSet(Fresh)
       else LocSet(l map { case Left(l) => l } toSet)
     }
@@ -155,6 +155,13 @@ trait ConvertAnnots { this: StateChecker =>
       case SymLoc(sym) => gen.mkAttributedIdent(sym)
     }
     
+    /* @TODO: this is already wrong, it yields a tree which pretty-prints as
+     *   state.this.any
+     *   
+     *   Select(This(state), "any")
+     * 
+     * where `state` is symbol of package `state`.
+     */
     val anyLocArg = gen.mkAttributedRef(anyLocObject)
     
     val storeAnns = elem._1 match {
@@ -202,6 +209,12 @@ trait ConvertAnnots { this: StateChecker =>
       case LocSet(s) =>
         List(AnnotationInfo(locClass.tpe, s.toList.map(location2Arg), Nil))
     }
-    storeAnns ::: assignAnns ::: locAnn
+    val res = storeAnns ::: assignAnns ::: locAnn
+    // if all three parts of the effect happen to be the default, we still need an annotation
+    // to indicate that. so we just put @mod()
+    if (res.isEmpty)
+      List(AnnotationInfo(modClass.tpe, Nil, Nil))
+    else
+      res
   }
 }

@@ -1,7 +1,7 @@
 package scala.tools.nsc.effects
 package state
 
-abstract class StateInferencer extends EffectInferencer[StateLattice] {
+trait StateInferencer extends EffectInferencer[StateLattice] {
   val checker: StateChecker
   
   import checker._

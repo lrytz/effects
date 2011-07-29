@@ -145,11 +145,15 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
       tree match {
         // Apply, TypeApply: handled ok in superclass (EffectTraverser, call to handleApplication)
 
-        case Select(_, _) =>
-          if (tree.symbol.isMethod) {
+        case Select(qual, name) =>
+          val sym = tree.symbol
+          if (sym.isMethod) {
             // applications to parameterless methods are `Select` trees, e.g. getters
             handleApplication(tree)
           } else {
+            // selection of a field (inside a setter)
+            val qualEff = subtreeEffect(qual, env)
+            add((qualEff._1, qualEff._2, LocSet(SymLoc(sym))))
             // TODO: handle selection of other things. (like what? objects, for instance)
           }
 
@@ -159,8 +163,8 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
             handleApplication(tree)
           } else {
             // an Ident tree can refer to parameters, local values or packages in the `root` package.
-            if (sym.owner.isRootPackage) mkElem(AnyLoc)
-            else mkElem(LocSet(SymLoc(tree.symbol))) // @TODO: is this OK for local objects? maybe instead of putting SymLoc for everything else, make specific tests for params, locals to create a SymLoc, and AnyLoc otherwise.
+            if (sym.owner.isRootPackage) add(mkElem(AnyLoc))
+            else add(mkElem(LocSet(SymLoc(sym)))) // @TODO: is this OK for local objects? maybe instead of putting SymLoc for everything else, make specific tests for params, locals to create a SymLoc, and AnyLoc otherwise.
           }
 
 
@@ -232,10 +236,15 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
         
     }
 
+    def qualEffect(tree: Tree, env: Env): Elem = tree match {
+      case Select(qual, _) => subtreeEffect(qual, env)
+      case Ident(_) => lattice.bottom
+    }
+    
     override def handleApplication(tree: Tree) = {
       val (fun, targs, argss) = decomposeApply(tree)
           
-      val funEff = subtreeEffect(fun, env)
+      val funEff = qualEffect(fun, env)
       val funEnv = env.applyEffect(funEff)
       val funLoc = funEff._3
       
@@ -287,7 +296,7 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
     currentMap = map
     val res = op
     currentMap = savedMap
-    op
+    res
   }
 
   override def adaptLatentEffect(eff: Elem, fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context): Elem = {
