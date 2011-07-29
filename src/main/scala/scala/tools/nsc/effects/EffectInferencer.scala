@@ -154,8 +154,8 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
 
   def inferConstructorEffect(sym: Symbol): Boolean = false
 
-  def getterEffect(sym: Symbol): Elem = lattice.bottom
-  def setterEffect(sym: Symbol): Elem = lattice.bottom
+  def getterEffect(sym: Symbol): Elem = lattice.pure
+  def setterEffect(sym: Symbol): Elem = lattice.pure
 
   /**
    * When the type of a value (return type for methods) was inferred

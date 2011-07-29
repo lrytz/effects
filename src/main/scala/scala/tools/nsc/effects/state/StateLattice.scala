@@ -14,9 +14,11 @@ abstract class StateLattice extends CompleteLattice {
    * the real bottom. The reason is that the EffectChecker uses this as the initial value
    * when computing the effect of a method.
    */
-  val bottom = (StoreLoc(), AssignLoc(), LocSet()) 
+  val bottom = (StoreLoc(), AssignLoc(), LocSet())
   val top = (StoreAny, AssignAny(AnyLoc), AnyLoc)
 
+  override val pure = (StoreLoc(), AssignLoc(), AnyLoc)
+  
   /**
    * Construct effect elements form effects in one domain.
    */
@@ -264,7 +266,12 @@ abstract class StateLattice extends CompleteLattice {
     }
   }
   case object StoreAny extends Store
-  case class StoreLoc(effs: Map[Location, LocSet] = Map()) extends Store
+  case class StoreLoc(effs: Map[Location, LocSet] = Map()) extends Store {
+    def this(in: Location, from: LocSet) = this(Map(in -> from))
+  }
+  object StoreLoc {
+    def apply(in: Location, from: LocSet) = new StoreLoc(in, from)
+  }
   
   def extendStoreMap(map: Map[Location, LocSet], loc: Location, set: LocSet) =
     map.updated(loc, map.get(loc).map(set.union).getOrElse(set))

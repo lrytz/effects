@@ -39,7 +39,7 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
     /**
      * Apply an effect to this environemnt.
      * 
-     * The `@assign` effects are applied first, which is a conservative guess.
+     * The `@assign` effects are applied first, which is a conservative result.
      * Example: take a nested function that does both, assigning outer variables
      * and storing values.
      * 
@@ -63,6 +63,16 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
      * 
      * The resulting environemnt is over-approximated, if we knew the store effect
      * happens first, the result would be more precise.
+     * 
+     * This is correct because an assign can influence a store, but not the other way
+     * around; if a store happens before an assign, the assign will already have the
+     * merged locality. Example
+     * 
+     *   def inner() { c.store(a); x = c }
+     * 
+     * has effect `@store(c, a) @assign(x, (c, a))`.
+     * 
+     * @TODO: what if there are multiple @assign and / or multiple @store? compute fixpoint?
      */
     def applyEffect(eff: Elem): Env = this match {
       case AnyEnv =>
@@ -172,7 +182,7 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
           val assignEff = mkElem(AssignLoc(lhsLoc, rhsEffect._3, true)) // @TOOD: don't do this if `lhsLoc` and `rhsEffect._3` are fresh
           val resEff = sequence(parts, assignEff)
           add((resEff._1, resEff._2, LocSet())) // no value is returned, so there's no locality
-
+          
         case _ => ()
       }
         
@@ -205,8 +215,26 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
       val locMap: Map[Location, Locality] = Map(ThisLoc(fun.symbol.owner) -> funLoc) ++ ((flatParams map SymLoc) zip flatArgLocs)
       
       withMap(locMap) { add(computeApplicationEffect(fun, targs, argss)) }
-    }    
+    }
     
+    override def computeApplicationEffect(fun: Tree, targs: List[Tree] = Nil, argss: List[List[Tree]] = Nil) = {
+      val latent = latentEffect(fun, targs, argss, rhsTyper.context1)
+      val mappedLatent = adaptLatentEffect(latent, fun, targs, argss, rhsTyper.context1)
+      val mappedPc = adaptToEffectPolymorphism(mappedLatent, fun, targs, argss, rhsTyper.context1)
+      
+      /* Effect polymorphism is not applied to the `@loc` effects, they are kept monomorphic. Example:
+       * 
+       *   def foo(a: A, b: B) @pc(a.bar(), b.baz()) = {
+       *     a.bar()
+       *     b.baz()
+       *   }
+       * 
+       * Looking at the `@pc` effects, we cannot see the returned locality.
+       * Maybe the `@loc` annotations can be extended in future to support something like
+       * `@loc(b.baz())`.
+       */
+      (mappedPc._1, mappedPc._2, mappedLatent._3)
+    }
   }
   
   private var currentMap: Map[Location, Locality] = null
@@ -220,6 +248,21 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
 
   override def adaptLatentEffect(eff: Elem, fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context): Elem = {
     mapLocalities(eff, currentMap)
+    
+    /* @TODO this is not enough!!!
+     *
+     * If there are multiple assign / modification effects in `eff`, then these need to be
+     * combined, the localities must be merged until reaching a fixpoint. For example
+     * 
+     *   def foo(a: A, b: B) = {
+     *     a.store(b)
+     *     b.modify()
+     *   }
+     * 
+     * really???
+     * (=> continue example: local environment that is modified by the two effects. does it always stay well-formed?)
+     */
+    
   }
     
   override def adaptPcEffect(eff: Elem, pc: PCInfo, fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context): Elem = {

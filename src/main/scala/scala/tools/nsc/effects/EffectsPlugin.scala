@@ -67,7 +67,6 @@ class EffectsPlugin(val global: Global) extends Plugin {
     val checker = paramCallsChecker
   } with EffectInferencer[ParamCalls] {
     val runsAfter = List("superaccessors")
-//    override val runsBefore = List("pickler") // should not be needed, the checker runs before pickler already
     val phaseName = "paramcallsinferencer"
   }
 */
@@ -79,7 +78,6 @@ class EffectsPlugin(val global: Global) extends Plugin {
     val checker = exceptionsChecker
   } with EffectInferencer[Exceptions] {
     val runsAfter = List("paramcallschecker")
-//    override val runsBefore = List("pickler")
     val phaseName = "exceptionsinferencer"
   }
 */
