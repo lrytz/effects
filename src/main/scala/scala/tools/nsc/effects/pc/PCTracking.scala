@@ -66,6 +66,7 @@ trait PCTracking[L <: CompleteLattice] extends EffectChecker[L] { /* this: Effec
                  */
                 ()
               case arg =>
+                // @TODO: problem here. arg.tpe is the type during type-checking, but we need the more up-to-date (refined) one. or is it refined? then why does it not work? :P
                 val funTpe = arg.tpe.memberType(pcfun)
                 val pcEff = fromAnnotation(funTpe).getOrElse(lattice.top)
                 res = lattice.join(res, adaptPcEffect(pcEff, pcInfo, fun, targs, argss, ctx))

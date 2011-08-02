@@ -767,6 +767,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
          *  - lazy vals (vals are in constructor, but lazy not (?))
          */
         case Apply(_, _) =>
+          handleApplication(tree)
 
         case TypeApply(_, _) =>
           handleApplication(tree)
@@ -827,7 +828,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
      * all these parts (calling `add` on their effects) and finally adds the latent effect
      * of the function using `computeApplicationEffect`.
      */
-    protected def handleApplication(tree: Tree) = {
+    protected def handleApplication(tree: Tree) {
       val (fun, targs, argss) = decomposeApply(tree)
       traverseQual(fun)
       traverseTrees(targs)

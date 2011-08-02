@@ -151,10 +151,9 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
             // applications to parameterless methods are `Select` trees, e.g. getters
             handleApplication(tree)
           } else {
-            // selection of a field (inside a setter)
+            // selection of an object or a field (inside a setter, fields are selected)
             val qualEff = subtreeEffect(qual, env)
             add((qualEff._1, qualEff._2, LocSet(SymLoc(sym))))
-            // TODO: handle selection of other things. (like what? objects, for instance)
           }
 
         case Ident(name) =>
@@ -176,15 +175,37 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
           // val rhsEnv = lhsEnv.applyEffect(rhsEffect) // not needed
 
           val parts = sequence(lhsEffect, rhsEffect)
-          
-          val lhsLoc = lhsEffect._3 match {
+
+          val lhsSymbol = lhsEffect._3 match {
             case LocSet(s) =>
               assert(s.size == 1)
-              s.toList(0)
+              val SymLoc(sym) = s.toList(0)
+              sym
           }
           
-          val assignEff = mkElem(AssignLoc(lhsLoc, rhsEffect._3, true)) // @TOOD: don't do this if `lhsLoc` and `rhsEffect._3` are fresh
-          val resEff = sequence(parts, assignEff)
+          val owner = lhsSymbol.owner
+          val assignmnetEffect = if (owner.isClass) {
+            // if the lefthand side is a selection of a field, then the assignment has a `@store` effect
+            val loc = {
+              if (owner.isModuleClass) SymLoc(owner.sourceModule)
+              else ThisLoc(owner)
+            }
+            if (lhsSymbol.hasAnnotation(localClass)) {
+              /* val List(List(arg)) = lhsSymbol.setter(owner).paramss
+              (StoreLoc(loc, LocSet(SymLoc(arg))), AssignLoc(), LocSet()) */
+              rhsEffect._3 match {
+                case AnyLoc => mkElem(StoreAny)
+                case from @ LocSet(_) => mkElem(StoreLoc(loc, from))
+              }
+            } else {
+              mkElem(StoreLoc(loc, LocSet(Fresh)))
+            }
+          } else {
+            // it's an assignment to a local variable, therefore an `@assign` effect
+            mkElem(AssignLoc(SymLoc(lhsSymbol), rhsEffect._3, true)) // @TOOD: don't do this if `lhsLoc` and `rhsEffect._3` are fresh
+          }
+          
+          val resEff = sequence(parts, assignmnetEffect)
           add((resEff._1, resEff._2, LocSet())) // no value is returned, so there's no locality
 
         case Block(stats, expr) =>
@@ -241,8 +262,9 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
       case Ident(_) => lattice.bottom
     }
     
-    override def handleApplication(tree: Tree) = {
+    override def handleApplication(tree: Tree) {
       val (fun, targs, argss) = decomposeApply(tree)
+      val funSym = fun.symbol
           
       val funEff = qualEffect(fun, env)
       val funEnv = env.applyEffect(funEff)
@@ -263,9 +285,14 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
       }
       
       // build a map from the function's parameter symbols to the localities of the arguments
-      val flatParams = fun.symbol.tpe.paramss.flatten
+      val flatParams = funSym.tpe.paramss.flatten
 
-      val locMap: Map[Location, Locality] = Map(ThisLoc(fun.symbol.owner) -> funLoc) ++ ((flatParams map SymLoc) zip flatArgLocs)
+      // @TODO: ThisLoc makes only sense when the owner is a class, not when it's a moduleclass (i.e. a method in an object)
+      
+      val locMap: Map[Location, Locality] = {
+        val receiverMap = if (funSym.owner.isModuleClass) Map() else Map(ThisLoc(funSym.owner) -> funLoc)
+        receiverMap ++ ((flatParams map SymLoc) zip flatArgLocs)
+      }
       
       withMap(locMap) { add(computeApplicationEffect(fun, targs, argss)) }
     }

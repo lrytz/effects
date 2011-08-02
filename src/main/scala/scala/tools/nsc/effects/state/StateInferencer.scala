@@ -7,24 +7,34 @@ trait StateInferencer extends EffectInferencer[StateLattice] {
   import checker._
   import global._
   
-  import lattice.{StoreLoc, AssignLoc, LocSet, ThisLoc, SymLoc, Fresh}
+  import lattice.{StoreLoc, AssignLoc, LocSet, ThisLoc, SymLoc, Fresh, mkElem}
 
   override def getterEffect(sym: Symbol): Elem = {
+    val owner = sym.owner
+    val loc = {
+      if (owner.isModuleClass) SymLoc(owner.sourceModule)
+      else ThisLoc(owner)
+    }
     val field = sym.accessed
     if (field.hasAnnotation(localClass)) {
-      (StoreLoc(), AssignLoc(), LocSet(ThisLoc(sym.owner)))
+      mkElem(LocSet(loc))
     } else {
       lattice.pure
     }
   }
 
   override def setterEffect(sym: Symbol): Elem = {
+    val owner = sym.owner
+    val loc = {
+      if (owner.isModuleClass) SymLoc(owner.sourceModule)
+      else ThisLoc(owner)
+    }
     val field = sym.accessed
     if (field.hasAnnotation(localClass)) {
       val List(List(arg)) = sym.paramss
-      (StoreLoc(ThisLoc(sym.owner), LocSet(SymLoc(arg))), AssignLoc(), LocSet())
+      mkElem(StoreLoc(loc, LocSet(SymLoc(arg))))
     } else {
-      (StoreLoc(ThisLoc(sym.owner), LocSet(Fresh)), AssignLoc(), LocSet())
+      mkElem(StoreLoc(loc, LocSet(Fresh)))
     }
   }
 }

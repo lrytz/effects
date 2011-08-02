@@ -143,7 +143,7 @@ trait ConvertAnnots { this: StateChecker =>
      * These defaults are also used if the user puts "@pure".
      */
     
-    if (store.isEmpty && assign.isEmpty && loc.isEmpty) None
+    if (store.isEmpty && assign.isEmpty && loc.isEmpty && pureAnn.isEmpty) None
     else Some((store.getOrElse(StoreLoc()), assign.getOrElse(AssignLoc()), loc.getOrElse(AnyLoc)))
   }
 
