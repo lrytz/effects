@@ -294,7 +294,11 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
         receiverMap ++ ((flatParams map SymLoc) zip flatArgLocs)
       }
       
-      withMap(locMap) { add(computeApplicationEffect(fun, targs, argss)) }
+      withMap(locMap) {
+        val fromApp = computeApplicationEffect(fun, targs, argss) 
+        val res = sequence(argssEff, fromApp)
+        add((res._1, res._2, fromApp._3))
+      }
     }
     
     override def computeApplicationEffect(fun: Tree, targs: List[Tree] = Nil, argss: List[List[Tree]] = Nil) = {
