@@ -347,6 +347,8 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
 
     if (!inferEffect(sym)) {
       // Check or infer the latent effect
+      if (sym.toString() == "method modify")
+        println()
       val rhsEff = computeEffect(dd.rhs, ddTyper, sym, unit)
       if (!lattice.lte(rhsEff, symEff))
         effectError(dd, symEff, rhsEff)

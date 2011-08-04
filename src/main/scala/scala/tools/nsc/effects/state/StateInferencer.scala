@@ -15,8 +15,8 @@ trait StateInferencer extends EffectInferencer[StateLattice] {
       if (owner.isModuleClass) SymLoc(owner.sourceModule)
       else ThisLoc(owner)
     }
-    val field = sym.accessed
-    if (field.hasAnnotation(localClass)) {
+    // for abstract fields, there is no field symbol. so we check the annotation on the getter.
+    if (atPhase(currentRun.typerPhase)(sym.hasAnnotation(localClass))) {
       mkElem(LocSet(loc))
     } else {
       lattice.pure
@@ -29,8 +29,9 @@ trait StateInferencer extends EffectInferencer[StateLattice] {
       if (owner.isModuleClass) SymLoc(owner.sourceModule)
       else ThisLoc(owner)
     }
-    val field = sym.accessed
-    if (field.hasAnnotation(localClass)) {
+    // for abstract fields, there is no field symbol. so we check the annotation on the getter.
+    val getter = sym.getter(sym.owner)
+    if (atPhase(currentRun.typerPhase)(getter.hasAnnotation(localClass))) {
       val List(List(arg)) = sym.paramss
       mkElem(StoreLoc(loc, LocSet(SymLoc(arg))))
     } else {

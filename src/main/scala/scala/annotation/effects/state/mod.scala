@@ -92,5 +92,5 @@ class loc(locs: Any*) extends Effect
  * Fields whose content is part of the locality of an object have
  * to be marked with `@local`.
  */
+@scala.annotation.target.field @scala.annotation.target.getter
 class local extends scala.annotation.StaticAnnotation // this is not an effect
-

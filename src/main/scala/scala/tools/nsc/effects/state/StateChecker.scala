@@ -81,13 +81,18 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
       case EnvMap(m, localsTo) =>
         val assignEnv = eff._2 match {
           case AssignAny(to) =>
+            /* Take all local variables (var only, not val!) out of the map `m`, only keep the
+             * location map for parameter symbols.
+             * Set the `localsTo` accordingly: join of `to`, all localities of local variables
+             * in `m`, and the current locality in `localsTo`.
+             */
             val (localVarsMap, othersMap) = m.partition(e => e._1.isLocalVar)
             val assignedLocality = (to :: localVarsMap.map(_._2).toList).reduceRight(joinLocality)
             val resLocality = localsTo.map(l => joinLocality(l, assignedLocality)).orElse(Some(assignedLocality))
             EnvMap(othersMap, resLocality)
             
           case assgn @ AssignLoc(strong, weak) =>
-            if (localsTo.isEmpty) {
+            if (localsTo.isDefined) {
               EnvMap(m, localsTo.map(l => joinLocality(l, assgn.assignedLocality)))
             } else {
               val strongMap = (m /: strong) {
@@ -129,7 +134,21 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
         storeEnv
     }
 
+    def lookup(loc: Location) = this match {
+      case AnyEnv => AnyLoc
+      case EnvMap(m, localsTo) =>
+        if (localsTo.isDefined && loc.isLocalVar) {
+          localsTo.get
+        } else {
+          m.getOrElse(loc, LocSet(loc))
+        }
+    }
   }
+  /**
+   * `m` maps locations (params, local variables) to localities.
+   * if `localsTo` is set, this defines the locality of all local variables (i.e. if
+   * a `AssignAny(to)` effect occured).
+   */
   case class EnvMap(m: Map[Location, Locality] = Map(), localsTo: Option[Locality] = None) extends Env
   case object AnyEnv extends Env
 
@@ -153,7 +172,8 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
           } else {
             // selection of an object or a field (inside a setter, fields are selected)
             val qualEff = subtreeEffect(qual, env)
-            add((qualEff._1, qualEff._2, LocSet(SymLoc(sym))))
+            val qualEnv = env.applyEffect(qualEff)
+            add((qualEff._1, qualEff._2, localityOf(sym, qualEnv, rhsTyper.context1)))
           }
 
         case Ident(name) =>
@@ -163,7 +183,7 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
           } else {
             // an Ident tree can refer to parameters, local values or packages in the `root` package.
             if (sym.owner.isRootPackage) add(mkElem(AnyLoc))
-            else add(mkElem(LocSet(SymLoc(sym)))) // @TODO: is this OK for local objects? maybe instead of putting SymLoc for everything else, make specific tests for params, locals to create a SymLoc, and AnyLoc otherwise.
+            else add(mkElem(localityOf(sym, env, rhsTyper.context1))) // @TODO: is this OK for local objects? maybe instead of putting SymLoc for everything else, make specific tests for params, locals to create a SymLoc, and AnyLoc otherwise.
           }
 
 
@@ -331,7 +351,7 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
   }
 
   override def adaptLatentEffect(eff: Elem, fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context): Elem = {
-    mapLocalities(eff, currentMap)
+    mapLocalities(eff, currentMap, ctx)
     
     /* @TODO this is not enough!!!
      *
@@ -374,19 +394,20 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
     val paramLoc = SymLoc(pc.param)
     // @TODO: fix when enabling PC calls on `this`
     val pcMap: Map[Location, Locality] = Map(ThisLoc(pc.fun.owner) -> currentMap.getOrElse(paramLoc, abort("parameter not in locations map: "+ paramLoc +", "+ currentMap)))
-    mapLocalities(eff, pcMap)
+    mapLocalities(eff, pcMap, ctx)
   }
 
-  def mapLocalities(eff: Elem, map: Map[Location, Locality]) = {
+  def mapLocalities(eff: Elem, map: Map[Location, Locality], ctx: Context) = {
     val store = eff._1 match {
       case StoreAny => StoreAny
       case StoreLoc(effs) =>
         ((StoreLoc(): Store) /: effs) {
           case (store, (in, from)) =>
-            val mappedFrom = mapLocality(from, map)
+            val mappedFrom = mapLocality(from, map, ctx)
             var res = store
-            map.getOrElse(in, nonMappedLocality(in)) match {
-              case AnyLoc => StoreAny
+            map.getOrElse(in, nonMappedLocality(in, ctx)) match {
+              case AnyLoc =>
+                res = StoreAny
               case LocSet(locs) =>
                 for (loc <- locs) { res = res.include(loc, mappedFrom) }
             }
@@ -395,47 +416,75 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
     }
     
     val assign = eff._2 match {
-      case AssignAny(to) => AssignAny(mapLocality(to, map))
+      case AssignAny(to) => AssignAny(mapLocality(to, map, ctx))
       case AssignLoc(strong, weak) =>
-        val mapStrong = strong.map(e => (e._1, mapLocality(e._2, map)))
-        val mapWeak = weak.map(e => (e._1, mapLocality(e._2, map)))
+        val mapStrong = strong.map(e => (e._1, mapLocality(e._2, map, ctx)))
+        val mapWeak = weak.map(e => (e._1, mapLocality(e._2, map, ctx)))
         AssignLoc(mapStrong, mapWeak)
     }
     
-    val loc = mapLocality(eff._3, map)
+    val loc = mapLocality(eff._3, map, ctx)
       
     (store, assign, loc)
   }
     
-  def mapLocality(loc: Locality, map: Map[Location, Locality]) = loc match {
+  def mapLocality(loc: Locality, map: Map[Location, Locality], ctx: Context) = loc match {
     case AnyLoc => AnyLoc
     case LocSet(locs) =>
-      ((LocSet(): Locality) /: locs)((set, loc) => joinLocality(set, map.getOrElse(loc, nonMappedLocality(loc))))
+      ((LocSet(): Locality) /: locs)((set, loc) => joinLocality(set, map.getOrElse(loc, nonMappedLocality(loc, ctx))))
   }
     
-  def nonMappedLocality(loc: Location): Locality = loc match {
+  /**
+   * The default locality when applying a locations-map to some location.
+   */
+  def nonMappedLocality(loc: Location, ctx: Context): Locality = loc match {
     case SymLoc(s) =>
-      if (isInScope(s)) LocSet(loc)
+      if (isInScope(s, ctx)) LocSet(loc)
       else AnyLoc
     case ThisLoc(s) =>
-      if (isInScope(s)) LocSet(loc)
+      if (isInScope(s, ctx)) LocSet(loc)
       else AnyLoc
     case Fresh =>
       LocSet(loc)
   }
-   
-  def isInScope(s: Symbol): Boolean = true
+  
+  /**
+   * Is the symbol `s` in scope with respect to context `ctx`?
+   * This is checked by looking at the owner symbols of `s`. If one
+   * of them is the same as the context's enclosing method, then
+   * the symbol is in scope.
+   */
+  def isInScope(s: Symbol, ctx: Context): Boolean = {
+    hasOwner(s, ctx.owner.enclMethod)
+  }
+  
+  
+  def hasOwner(s: Symbol, o: Symbol): Boolean = {
+    if (s == NoSymbol) false
+    else s == o || hasOwner(s.owner, o)
+  }
+  
+  /**
+   * The locality of a selected symbol.
+   *  - if the symbol is a parameter of an outer method, SymLoc(sym)
+   *  - if the symbol is a local value / variable defined in an outer method, SymLoc(sym)
+   *  - if the symbol is a parameter of this method, then look up the locality in the environment
+   *  - if the symbol is a local value / variable defined in the current method, then
+   *    look up the locality in the environment
+   *  - if the symbol is anything else, AnyLoc
+   */
+  def localityOf(sym: Symbol, env: Env, ctx: Context) = {
+    val inCurrentMethod = hasOwner(sym, ctx.owner.enclMethod)
+    
+    val res = if ((sym.isParameter || sym.isLocal)) {
+      if (!inCurrentMethod)
+        LocSet(SymLoc(sym))
+      else
+        env.lookup(SymLoc(sym))
+    } else {
+      AnyLoc
+    }
+    println("locality of "+ sym +" is "+ res)
+    res
+  }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

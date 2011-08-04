@@ -184,8 +184,18 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
       val sym = tree.symbol
 
       tree match {
-        case DefDef(_, _, _, _, _, _) if (sym.isGetter || sym.isSetter) =>
-          () // they are handled in `case ValDef`
+        case DefDef(_, _, _, _, _, _) if sym.isGetter =>
+          if (sym.isDeferred) {
+            updateEffect(sym, getterEffect(sym))
+            val setter = sym.setter(sym.owner)
+            if (setter != NoSymbol)
+              updateEffect(setter, setterEffect(setter))
+          } else {
+            () // non-abstract getters are handled in `case ValDef` below
+          }
+
+        case DefDef(_, _, _, _, _, _) if sym.isSetter =>
+          () // handled above (for abstract fields) or in `case ValDef` below
 
         case DefDef(_, _, tparams, vparamss, tt @ TypeTree(), rhs) =>
           /* See documentation on class EffectInferencer.
@@ -241,12 +251,10 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
           // at typer phase so that lazy effect types don't get forced yet.
           val (getter, setter) = atPhase(currentRun.typerPhase)(sym.getter(sym.owner), sym.setter(sym.owner))
 
-          if (rhs.isEmpty || !inferRefinement(sym, tt.wasEmpty)) {
-            if (getter != NoSymbol)
-              updateEffect(getter, getterEffect(getter))
-            if (setter != NoSymbol)
-              updateEffect(setter, setterEffect(setter))
-          } else {
+          // Abstract field definitions are represented in trees as abstract accessors, i.e. getter and, if mutable, setter
+          assert(!rhs.isEmpty || !sym.owner.isClass, "field valdef with empty rhs: "+ tree)
+
+          if (inferRefinement(sym, tt.wasEmpty)) {
             refineType += sym
 
             val fieldTpe = sym.tpe
@@ -272,6 +280,12 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
                 setter.updateInfo(setterType)
               }))
             }
+          } else {
+            // no inference of a refined field type; just set the getter and setter effects
+            if (getter != NoSymbol)
+              updateEffect(getter, getterEffect(getter))
+            if (setter != NoSymbol)
+              updateEffect(setter, setterEffect(setter))
           }
 
         case DefDef(_, _, _, _, _, _) => abort("Unexpected DefDef: no tpt @ TypeTree()")

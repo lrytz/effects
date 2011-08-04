@@ -238,7 +238,7 @@ abstract class StateLattice extends CompleteLattice {
    */
   trait Location {
     def isLocalVar = this match {
-      case SymLoc(sym) => !sym.isParameter && sym.isVariable
+      case SymLoc(sym) => sym.isLocal && sym.isVariable
       case ThisLoc(_) => false
       case Fresh => false
     }
