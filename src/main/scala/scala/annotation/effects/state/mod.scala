@@ -66,6 +66,7 @@ class store(in: Any, from: Any*) extends Effect
  * has effect @mod(o) (or, @store(o, x)).
  *
  * Purity:                   @assign(fresh)
+ * Assign a fresh value:     @assign(l) == @assign(l, fresh)
  * Unknown target:           @assign(l, any)
  * Assign any variable to l: @assign(any, l)
  * Largest effect:           @assign(any, any)
