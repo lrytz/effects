@@ -67,6 +67,6 @@ package effects
  *    (current "solution", but breaks on these existential types)
  *    
  * PROBLEM with current solution: if an effect system is not enabled, but annotations are there,
- * the will infer wrong effect annotations which are not deleted and end up being pickled.
+ * the typer will infer wrong effect annotations which are not deleted and end up being pickled.
  */
 trait Effect extends StaticAnnotation with TypeConstraint

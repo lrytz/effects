@@ -895,7 +895,8 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   }
 
   /**
-   * Add an AnnotationChecker to influence `lub` and `glb` computations
+   * Add an AnnotationChecker to influence `lub` and `glb` computations, and also
+   * propagation of effect annotations in refined types.
    */
   val annotationChecker = new AnnotationChecker {
     override val inferenceOnly = true
