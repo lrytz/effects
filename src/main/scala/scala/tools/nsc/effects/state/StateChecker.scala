@@ -164,29 +164,6 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
           m.get(loc)
         }
     }
-
-    /**
-     * Looks up the locality of a location in the current environment, using
-     * a default value when the locality is not present in the environment.
-     * 
-     * The default value is basically an initial value; when analyzing a method,
-     * we start off using an empty environment, all locations are mapped to the
-     * default locality. The code of the method merges and changes localities,
-     * and these changes are recorded in the environment.
-     * 
-     * If we are analyzing method `m`, the initial locations are
-     * 
-     *  - `LocSet(Fresh)`      for local values / variables defined in `m`
-     *  - `LocSet(SymLoc(s))`  for symbols `s` that are parameters of `m`, and 
-     *                         also parameters or local variables of outer methods
-     *  - `LocSet(ThisLoc(s))` for this references where `s` is in scope
-     *  - `AnyLoc`             for symbols `s` that are not in scope
-     */
-/*    def lookupDefault(loc: Location): Locality = lookup(loc).getOrElse(loc match {
-      case SymLoc(s) if s.isLocal => LocSet(Fresh) // @TODO: this should only be for variables that are defined in the *current* method. for locals in outer methods, it should be SymLoc(s)
-      case _ => LocSet(loc) 
-    })
-*/
   }
 
   /**
@@ -327,8 +304,8 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
           add((res._1, res._2, LocSet()))
 
         case Block(stats, expr) =>
-          val (statsEff, statsEnv) = (stats :\ (lattice.bottom, env)) {
-            case (stat, (eff, env)) =>
+          val (statsEff, statsEnv) = ((lattice.bottom, env) /: stats) {
+            case ((eff, env), stat) =>
               val e = subtreeEffect(stat, env)
               (sequence(eff, e), env.applyEffect(e))
           }
@@ -383,21 +360,21 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
     override def handleApplication(tree: Tree) {
       val (fun, targs, argss) = decomposeApply(tree)
       val funSym = fun.symbol
-          
+      
       val funEff = qualEffect(fun, env)
       val funEnv = env.applyEffect(funEff)
       val funLoc = funEff._3 // @TODO: this only works "by chance", because we use "qualEffect", which actually returns the locality of the function's qualifier. maybe just rename "funLoc" to "qualLoc" to make things clear.
       
-      // foldLeft: we need to traverse left to right (that's the order in which effects
-      // happen, the order of evaluation for the arguments).
-      val (targsEff, targsEnv /*, targLocs*/) = (targs :\ (funEff, funEnv/*, List[Locality]()*/)) {
-        case (targ, (eff, env/*, locs*/)) =>
+      // foldRight traverses left to right (that's the order in which
+      // effects happen, the order of evaluation for the arguments).
+      val (targsEff, targsEnv /*, targLocs*/) = ((funEff, funEnv/*, List[Locality]()*/) /: targs) {
+        case ((eff, env/*, locs*/), targ) =>
           val e = subtreeEffect(targ, env)
           (sequence(eff, e), env.applyEffect(e)/*, e._3 :: locs*/)
       }
           
-      val (argssEff, argssEnv, flatArgLocs) = (argss.flatten :\ (targsEff, targsEnv, List[Locality]())) {
-        case (arg, (eff, env, locs)) =>
+      val (argssEff, argssEnv, flatArgLocs) = ((targsEff, targsEnv, List[Locality]()) /: argss.flatten) {
+        case ((eff, env, locs), arg) =>
           val e = subtreeEffect(arg, env)
           (sequence(eff, e), env.applyEffect(e), e._3 :: locs)
       }
@@ -549,21 +526,6 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
     case LocSet(locs) =>
       ((LocSet(): Locality) /: locs)((set, loc) => joinLocality(set, localityOf(loc, env, ctx) /* map.getOrElse(loc, nonMappedLocality(loc, ctx))*/))
   }
-    
-  /**
-   * The default locality when applying a locations-map to some location.
-   */
-/*  def nonMappedLocality(loc: Location, ctx: Context): Locality = loc match {
-    case SymLoc(s) =>
-      if (isInScope(s, ctx)) LocSet(loc)
-      else AnyLoc
-    case ThisLoc(s) =>
-      if (isInScope(s, ctx)) LocSet(loc)
-      else AnyLoc
-    case Fresh =>
-      LocSet(loc)
-  }
-*/
   
   /**
    * Is the local value / variable or paramter `local` in scope with
