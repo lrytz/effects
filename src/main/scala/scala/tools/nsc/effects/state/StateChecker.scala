@@ -93,7 +93,7 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
             
           case assgn @ AssignLoc(strong, weak) =>
             if (localsTo.isDefined) {
-              // @TODO: could exclude the localities of assigned locations which are not in scope.
+              // @TODO: could exclude the localities of assigned locations which are not in scope? should not happen!
               EnvMap(m, localsTo.map(l => joinLocality(l, assgn.assignedLocality)))
             } else {
               val strongMap = (m /: strong) {

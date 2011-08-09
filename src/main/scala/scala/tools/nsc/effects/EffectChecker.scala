@@ -107,6 +107,9 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * 
    * @TODO: treat `@pure` here, i.e. let every subclass decide how to handle it?
    * or assign `lattice.bottom` directly in the EffectInferencer?
+   * 
+   * later: probably better to let each effect checker handle it itself. maybe some
+   * effect system wants to treat a combination of @prue and other annotations.
    */
   def fromAnnotation(annots: List[AnnotationInfo]): Option[Elem]
   def fromAnnotation(tpe: Type): Option[Elem] = fromAnnotation(tpe.finalResultType.annotations)
@@ -373,7 +376,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
 
     // check the latent effect and return type for all overridden methods
     for (os <- sym.allOverriddenSymbols) {
-      // @TODO: lattice.top when overridden does not have an effect annotation?
+      // @TODO: lattice.top when overridden does not have an effect annotation? more conservative would be lattice.bottom.
       val overriddenEffect = fromAnnotation(os.tpe).getOrElse(lattice.top)
       if (!lattice.lte(symEff, overriddenEffect))
         overrideError(dd, os, overriddenEffect, symEff)
@@ -426,6 +429,9 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
      *   tp2 = Int @noEff
      *
      * => Need to remove latent effects.
+     * 
+     * @TODO (later): since now we have `packedTypeAdaptAnnotations`, do we
+     * still need to call `removeEffectAnnotations` here?
      */
     val (tp1a, tp2a) = (removeEffectAnnotations(tp1), removeEffectAnnotations(tp2))
     if (!annotationChecker.localInferMode(tp1a <:< tp2a)) {
@@ -524,8 +530,11 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
        * @TODO: it's a bit unsystematic to do it only here (the outermost
        * node of the tree), maybe we should have a traverser deleting all
        * annotatinos in trees.
+       * 
+       * @TODO 2: this should now no longer be necessary, because the
+       * AnnotationChecker now implements `packedTypeAdaptAnnotations`.
        */
-      res.tpe = removeEffectAnnotations(res.tpe)
+      // res.tpe = removeEffectAnnotations(res.tpe)
       res
     }
 
@@ -592,7 +601,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
          *   def foo: Int @noEff @noXio = 1
          *   val x = () => { eff(); foo }
          * ==> x: (() => Int @noXio @noEff){def apply(): Int @noXio @eff}
-         * Therefore, remove effect annotations
+         * Therefore, remove effect annotations (done in `refine`)
          */
 
         val restpe = localTyper.packedType(refinedBody, funSym).deconst
@@ -905,6 +914,40 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       val eff1 = fromAnnotation(tpe1.annotations).getOrElse(lattice.top)
       val eff2 = fromAnnotation(tpe2.annotations).getOrElse(lattice.top)
       lattice.lte(eff1, eff2)
+    }
+    
+    /**
+     * This method is called in `packedType`, it allows pre-processing the trees
+     * (and therefore their type) before passing them to packedType. Since during
+     * type inference, `packedType` is called on the rhs-type of a definition, this
+     * allows us to remove incorrect effect annotations. Example:
+     * 
+     *   def f(i: Int): Int @pure = i + 1
+     *   def g() = { doSideEffect(); f(10) }
+     * 
+     * When computing the return of method g, the (standard) type-checker looks at
+     * the type of the rhs-tree, which in this case is `Int @pure` (pure is a TypeConstraint).
+     * This is not correct, effect inference works differently.
+     * 
+     * The situation can be even worse, as the following example shows:
+     * 
+     *   abstract class A { def f(): Unit @mod(this) }
+     *   def g(a: A) = { val x = a; a.f() }
+     * 
+     * In this case, the return type inferred for g is `Unit @mod(x) forSome { val x: A }`.
+     * In order to remove this incorrect effect annotation we would even have to deal
+     * with existentials. So it's much simpler to just remove effect annotations from
+     * trees, since they don't make any sense there anyway.
+     * 
+     * @TODO: if we have multiple effect checkers, in principle its enough if one of them
+     * does this. As it is now, the first one will remove all effect annotations and the
+     * others just run consuming cpu, but not doing anything.
+     */
+    override def packedTypeAdaptAnnotations(tree: Tree, owner: Symbol): Tree = {
+      val old = tree.tpe
+      tree.tpe = removeEffectAnnotations(tree.tpe)
+      if (old != tree.tpe) println("removed effect annotation from tree: "+ tree)
+      tree
     }
   }
   global.addAnnotationChecker(annotationChecker)
