@@ -23,7 +23,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
 
   /**
    * Contains method symbols for which the latent effect has to be inferrred.
-   * See method `inferEffect` for more details.
+   * See method `inferEffect` in EffectInferencer for more details.
    */
   val inferEffect: m.Set[Symbol] = new m.HashSet()
 
@@ -728,7 +728,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * assigns more precise symbols to `Select` nodes. So initially after ordinary
    * type-checking, the tree that selects `bar` has as symbol "C.bar". However,
    * after calling `refine`, that Select tree gets the more precise symbol
-   * `<refinement>.baz`, and `computeEffect` will find that applying this method
+   * `<refinement>.bar`, and `computeEffect` will find that applying this method
    * is pure.
    * 
    * @param rhs        The `rhs` tree of a DefDef or ValDef
@@ -739,6 +739,18 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   def computeEffect(rhs: Tree, rhsTyper: Typer, sym: Symbol, unit: CompilationUnit) = {
     val refinedTree = refine(rhs, rhsTyper, sym, unit)
     newEffectTraverser(refinedTree, rhsTyper, sym, unit).compute()
+  }
+  
+  def computePrimConstrEffect(impl: Template, implTyper: Typer, classSym: Symbol,
+                              primConstrRhs: Tree, primConstrTyper: Typer, primConstrSym: Symbol,
+                              unit: CompilationUnit): Elem = {
+    val refinedRhs = refine(primConstrRhs, primConstrTyper, primConstrSym, unit)
+    val rhsEff = newEffectTraverser(refinedRhs, primConstrTyper, primConstrSym, unit).compute()
+    
+    val refinedImpl = refine(impl, implTyper, classSym, unit)
+    val implEff = newEffectTraverser(refinedImpl, implTyper, classSym, unit).compute()
+
+    lattice.join(rhsEff, implEff)
   }
 
   /**
@@ -946,7 +958,8 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     override def packedTypeAdaptAnnotations(tree: Tree, owner: Symbol): Tree = {
       val old = tree.tpe
       tree.tpe = removeEffectAnnotations(tree.tpe)
-      if (old != tree.tpe) println("removed effect annotation from tree: "+ tree)
+      if (old != tree.tpe)
+        println("removed effect annotation from tree: "+ tree)
       tree
     }
   }

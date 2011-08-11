@@ -146,13 +146,19 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
    *   }
    */
   def inferEffect(sym: Symbol): Boolean = {
-    !sym.owner.isClass ||
+    sym.isLocal ||
     sym.isPrivate ||
 //    sym.isFinal ||
     sym.tpe.finalResultType.hasAnnotation(inferAnnotation)
   }
 
-  def inferConstructorEffect(sym: Symbol): Boolean = false
+  def inferConstructorEffect(sym: Symbol): Boolean = {
+    sym.owner.isLocal ||
+    sym.owner.isPrivate || {
+      if (sym.isPrimaryConstructor) sym.owner.hasAnnotation(inferAnnotation)
+      else sym.hasAnnotation(inferAnnotation)
+    }
+  }
 
   def getterEffect(sym: Symbol): Elem = lattice.pure
   def setterEffect(sym: Symbol): Elem = lattice.pure
@@ -165,16 +171,17 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
    *
    * @TODO: infer for final?
    */
-  def inferRefinement(sym: Symbol, inferType: Boolean): Boolean = {
+  def inferRefinement(sym: Symbol, typeWasInferred: Boolean): Boolean = {
     // Unit is never refined
     sym.tpe.finalResultType.typeSymbol != definitions.UnitClass &&
+    // Constructors never return a refined type
     !sym.isConstructor && {
-      inferType && (
-        !sym.owner.isClass ||
-          sym.isPrivate
+      typeWasInferred && (
+        sym.isLocal ||
+        sym.isPrivate
 //      sym.isFinal
-        ) ||
-        sym.tpe.finalResultType.hasAnnotation(refineAnnotation)
+      ) ||
+      sym.tpe.finalResultType.hasAnnotation(refineAnnotation)
     }
   }
 
@@ -197,7 +204,13 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
         case DefDef(_, _, _, _, _, _) if sym.isSetter =>
           () // handled above (for abstract fields) or in `case ValDef` below
 
-        case DefDef(_, _, tparams, vparamss, tt @ TypeTree(), rhs) =>
+        case ModuleDef(_, _, impl) =>
+          inferConstr(sym, None, impl)
+
+        case ClassDef(_, _, tparams, impl) =>
+          inferConstr(sym, Some(tparams), impl)
+
+        case DefDef(_, _, tparams, vparamss, tt @ TypeTree(), rhs) if !sym.isPrimaryConstructor =>
           /* See documentation on class EffectInferencer.
            *  - `transOwner` is the method symbol
            *  - `transTyper` is the typer for the method body
@@ -208,6 +221,13 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
           // The same is done in `typedDefDef` in the typer.
           rhsTyper.reenterTypeParams(tparams)
           rhsTyper.reenterValueParams(vparamss)
+          
+          val annots = if (sym.isConstructor) {
+            assert (!sym.isPrimaryConstructor, sym) // these are handled above
+            sym.annotations
+          } else {
+            sym.tpe.finalResultType.annotations
+          }
 
           /**
            * If "tt" was inferred there might be a wrong effect annotation.
@@ -215,16 +235,26 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
            *   def m = getC().f
            * Typer infers type `Int @noEff` for m, which is wrong.
            * 
-           * @TODO: is `wasEmpty` always correct?
+           * @TODO: this is no longer the case, because the annotation checker now implements `packedTypeAdaptAnnotations`
+           * test if everything works as expected in that regard. so for now (*), removed that test.
+           * 
+           * @TODO: tests if `wasEmpty` is always correct.
            */
-          val hasNoE = tt.wasEmpty || fromAnnotation(sym.tpe).isEmpty
-          val inferE = hasNoE && inferEffect(sym) && (!sym.isConstructor || inferConstructorEffect(sym))
+          val hasNoE = fromAnnotation(annots).isEmpty // tt.wasEmpty || fromAnnotation(sym.tpe).isEmpty  (*)
+          val inferE = hasNoE && {
+            if (sym.isConstructor) inferConstructorEffect(sym)
+            else inferEffect(sym)
+          }
           val inferT = !rhs.isEmpty && inferRefinement(sym, tt.wasEmpty)
 
           if (inferE)
             checker.inferEffect += sym
           else if (hasNoE)
             updateEffect(sym, lattice.top)
+          else if (sym.isConstructor)
+            // for (non-primary, these are handled above in a separate pattern) constructors,
+            // copy the effect annotations from the constructor symbol to the return type.
+            updateEffect(sym, fromAnnotation(annots).get)
 
           if (inferT)
             refineType += sym
@@ -288,12 +318,63 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
               updateEffect(setter, setterEffect(setter))
           }
 
-        case DefDef(_, _, _, _, _, _) => abort("Unexpected DefDef: no tpt @ TypeTree()")
-        case ValDef(_, _, _, _)       => abort("Unexpected ValDef: no tpt @ TypeTree()")
-        case _ => ()
+        case DefDef(_, _, _, _, _, _) =>
+          // they are not handled by the above `case DefDef`, but by an even more above `case ClassDef`
+          if (!sym.isPrimaryConstructor) abort("Unexpected DefDef: no tpt @ TypeTree()")
+        case ValDef(_, _, _, _)       =>
+          abort("Unexpected ValDef: no tpt @ TypeTree()")
+        case _ =>
+          ()
       }
 
       super.transform(tree)
+    }
+    
+    def inferConstr(sym: Symbol, tparams: Option[List[TypeDef]], impl: Template) {
+          // handle primary constructor of classes, modules and traits (for the last, it may be missing!)
+
+          val primaryConstr = sym.primaryConstructor
+          
+          if (primaryConstr != NoSymbol) { // interface-only traits don't have one
+
+            val (templateTyper, constrTyper) = atOwner(sym) {
+              val classDefTyper = localTyper
+              tparams.map(tps => classDefTyper.reenterTypeParams(tps)) // for ModuleDef, there are none.
+              atOwner(sym) {
+                val cT = atOwner(primaryConstr)(localTyper)
+                (localTyper, cT)
+              }
+            }
+          
+            val hasNoE = fromAnnotation(sym.annotations).isEmpty
+            val inferE = hasNoE && inferConstructorEffect(primaryConstr)
+
+            if (inferE)
+              checker.inferEffect += primaryConstr
+            else
+              updateEffect(primaryConstr, fromAnnotation(sym.annotations).getOrElse(lattice.top))
+            
+            val primaryConstrDef = impl.body.collect({
+              case dd @ DefDef(_, _, _, _, _, rhs) if dd.symbol == primaryConstr => dd
+            }).head
+          
+            constrTyper.reenterTypeParams(primaryConstrDef.tparams)
+            constrTyper.reenterValueParams(primaryConstrDef.vparamss)
+
+            val tp = primaryConstr.tpe // don't move this valdef before the `updateEffect` above!
+            if (inferE)
+              primaryConstr.updateInfo(mkLazyType(_ => {
+                val eff = computePrimConstrEffect(impl, templateTyper, sym,
+                                                  primaryConstrDef.rhs, constrTyper, primaryConstr,
+                                                  unit)
+                val annotType = typeWithEffect(tp, eff)
+
+                // updateInfo removes the lazy type from the type history
+                sym.updateInfo(annotType)
+              }))
+            
+          }
+
     }
   }
 

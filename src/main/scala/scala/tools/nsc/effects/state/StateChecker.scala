@@ -214,13 +214,26 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
     res
   }
   
+  override def computePrimConstrEffect(impl: Template, implTyper: Typer, classSym: Symbol,
+                                      primConstrRhs: Tree, primConstrTyper: Typer, primConstrSym: Symbol,
+                                      unit: CompilationUnit): Elem = {
+    val refinedRhs = refine(primConstrRhs, primConstrTyper, primConstrSym, unit)
+    val rhsEff = new StateTraverser(primConstrRhs, EnvMap(), primConstrTyper, primConstrSym, unit).compute()
+    
+    val refinedImpl = refine(impl, implTyper, classSym, unit).asInstanceOf[Template]
+    val implEnv = EnvMap().applyEffect(rhsEff)
+    val implEff = new StateTraverser(impl, implEnv, implTyper, classSym, unit).compute()
+    
+    lattice.sequence(rhsEff, implEff)
+  }
+
   def subtreeEffect(tree: Tree, env: Env, localTyper: Typer, sym: Symbol, unit: CompilationUnit): Elem = {
     new StateTraverser(tree, env, localTyper, sym, unit).compute()
   }
 
   class StateTraverser(rhs: Tree, env: Env, rhsTyper: Typer, sym: Symbol, unit: CompilationUnit) extends EffectTraverser(rhs, rhsTyper, sym, unit) {
     def subtreeEffect(tree: Tree, newEnv: Env) = StateChecker.this.subtreeEffect(tree, newEnv, rhsTyper, sym, unit)
-
+    
     override def traverse(tree: Tree) {
       tree match {
         // Apply, TypeApply: handled ok in superclass (EffectTraverser, call to handleApplication)
