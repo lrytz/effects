@@ -48,6 +48,26 @@ abstract class StateLattice extends CompleteLattice {
   def sequence(a: Elem, b: Elem) =
     (joinStore(a._1, b._1), sequenceAssignment(a._2, b._2), b._3)
 
+  /**
+   * Change the returned locality of an effect, while making sure
+   * that the result is a well-formed effect triple. Simply said,
+   * a fresh value can only be returned by methods that don't have
+   * any side-effects.
+   * 
+   * @TOOD: compare the implamentation of this method with the notes on paper.
+   */
+  def updateLocality(eff: Elem, loc: Locality) = {
+    if (loc.isFresh) {
+      if (eff._1.isPure && eff._2.isPure)
+        (eff._1, eff._2, loc)
+      else if (eff._3.isFresh)
+        (eff._1, eff._2, AnyLoc)
+      else
+        eff
+    } else {
+      eff
+    }
+  }
 
   def joinStore(a: Store, b: Store): Store = (a, b) match {
     case (StoreAny, _) | (_, StoreAny) =>
@@ -215,7 +235,13 @@ abstract class StateLattice extends CompleteLattice {
   /**
    * Locality of returned value
    */
-  trait Locality
+  trait Locality {
+    def isFresh = this match {
+      case LocSet(s) =>
+        s.isEmpty || s.toList == List(Fresh)
+      case _ => false
+    }
+  }
   case object AnyLoc extends Locality
   case class LocSet(s: Set[Location] = Set()) extends Locality {
     def this(l: Location) = this(Set(l))
@@ -264,6 +290,15 @@ abstract class StateLattice extends CompleteLattice {
           StoreLoc(extendStoreMap(effs, in, locs))
       }
     }
+    
+    def isPure = this match {
+      case StoreLoc(effs) =>
+        effs.toList match {
+          case Nil => true
+          case List((in, from)) => in == Fresh && from.isFresh
+        }
+      case _ => false
+    }
   }
   case object StoreAny extends Store
   case class StoreLoc(effs: Map[Location, LocSet] = Map()) extends Store {
@@ -288,6 +323,19 @@ abstract class StateLattice extends CompleteLattice {
         val m = if (useStrong) strong else weak
         val res = m.updated(to, m.get(to).map(joinLocality(from, _)).getOrElse(from))
         if (useStrong) AssignLoc(res, weak) else AssignLoc(strong, res)
+    }
+    
+    def isPure = this match {
+      case AssignLoc(strong, weak) =>
+        (strong.toList match {
+          case Nil => true
+          case List((loc, from)) => loc == Fresh && from.isFresh
+        }) && (weak.toList match {
+          case Nil => true
+          case List((loc, from)) => loc == Fresh && from.isFresh
+        })
+
+      case _ => false
     }
   }
   case class AssignAny(to: Locality) extends Assignment {

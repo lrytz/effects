@@ -282,8 +282,10 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
           val (getter, setter) = atPhase(currentRun.typerPhase)(sym.getter(sym.owner), sym.setter(sym.owner))
 
           // Abstract field definitions are represented in trees as abstract accessors, i.e. getter and, if mutable, setter
-          assert(!rhs.isEmpty || !sym.owner.isClass, "field valdef with empty rhs: "+ tree)
+          // however, for class parameters, there will still be a ValDef without rhs owned by a class.
+          assert(!rhs.isEmpty || !sym.owner.isClass || sym.isParamAccessor, "field valdef with empty rhs: "+ tree)
 
+          // for parameters, `tt.wasEmpty` is always false.
           if (inferRefinement(sym, tt.wasEmpty)) {
             refineType += sym
 
@@ -370,7 +372,7 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
                 val annotType = typeWithEffect(tp, eff)
 
                 // updateInfo removes the lazy type from the type history
-                sym.updateInfo(annotType)
+                primaryConstr.updateInfo(annotType)
               }))
             
           }

@@ -5,7 +5,7 @@ import transform.{ Transform, TypingTransformers }
 import plugins.PluginComponent
 import collection.{ mutable => m }
 
-abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with Transform with TypingTransformers {
+abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with Transform with TypingTransformers with ExternalEffects[L] {
   // abstract val global: Global
   import global._
   import analyzer.{Typer, Context}
@@ -882,13 +882,25 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   def latentEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context) = {
     val sym = fun.symbol
     val eff = fromAnnotation(sym.tpe)
-    eff.getOrElse(lattice.top)
+    val res = lookupExternalEffect(eff, sym, targs, argss, ctx)
+    res.getOrElse(lattice.top)
+  }
+  
+  /**
+   * @implement This method can be overridden by concrete effect checkers. It is
+   * intended to define side-effects (or purity) of functions defined in external
+   * libraries, e.g. the constructor of the class Object, or methods in value classes.
+   */
+  def lookupExternalEffect(effectFromSymbol: Option[Elem], sym: Symbol,
+                           targs: List[Tree], argss: List[List[Tree]], ctx: Context) = {
+    effectFromSymbol.orElse(lookupExternal(sym, targs, argss, ctx))
   }
 
   /**
    * @implement This method can be overridden by concrete effect checkers. It allows
    * to adapt / change / customize the latent effect, which is obtained from a function's
-   * effect annotation.
+   * effect annotation, for example to adapt Symbols in the effect according to the
+   * Context. For an example, see the StateChecker.
    */
   def adaptLatentEffect(eff: Elem, fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context): Elem = {
     eff

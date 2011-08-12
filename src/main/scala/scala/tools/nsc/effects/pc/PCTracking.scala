@@ -1,7 +1,7 @@
 package scala.tools.nsc.effects
 package pc
 
-trait PCTracking[L <: CompleteLattice] extends EffectChecker[L] { /* this: EffectChecker[L] => */
+trait PCTracking[L <: CompleteLattice] extends EffectChecker[L] with ExternalPCEffects[L] { /* this: EffectChecker[L] => */
   import global._
   import analyzer.Context
 
@@ -34,7 +34,9 @@ trait PCTracking[L <: CompleteLattice] extends EffectChecker[L] { /* this: Effec
     val flatParamss = fun.symbol.tpe.paramss.flatten
 
     val annots = fun.symbol.tpe.finalResultType.annotations
-    pcFromAnnotations(annots) match {
+    val fromAnnot = pcFromAnnotations(annots)
+    val external = lookupExternalPCEffect(fromAnnot, fun.symbol, targs, argss, ctx)
+    external match {
       case None | Some(AnyPC) =>
         res = lattice.join(res, anyParamCall(flatArgss, ctx))
       case Some(PC(calls)) =>
@@ -68,8 +70,10 @@ trait PCTracking[L <: CompleteLattice] extends EffectChecker[L] { /* this: Effec
               case arg =>
                 // @TODO: problem here. arg.tpe is the type during type-checking, but we need the more up-to-date (refined) one. or is it already refined? then why does it not work? :P
                 val funTpe = arg.tpe.memberType(pcfun)
-                val pcEff = fromAnnotation(funTpe).getOrElse(lattice.top)
-                res = lattice.join(res, adaptPcEffect(pcEff, pcInfo, fun, targs, argss, ctx))
+                val pcEff = fromAnnotation(funTpe)
+                val external = lookupExternalEffect(pcEff, pcfun, targs, argss, ctx)
+                val resEff = external.getOrElse(lattice.top)
+                res = lattice.join(res, adaptPcEffect(resEff, pcInfo, fun, targs, argss, ctx))
             }
           }
         }
@@ -77,6 +81,16 @@ trait PCTracking[L <: CompleteLattice] extends EffectChecker[L] { /* this: Effec
     res
   }
 
+  /**
+   * @implement This method can be overridden by concrete effect checkers. It is
+   * intended to define parameter calls of functions defined in external libraries,
+   * e.g. the constructor of the class Object, or methods in value classes.
+   */
+  def lookupExternalPCEffect(effectFromSymbol: Option[pcLattice.Elem], sym: Symbol,
+                             targs: List[Tree], argss: List[List[Tree]], ctx: Context) = {
+    effectFromSymbol.orElse(lookupExternalPC(sym, targs, argss, ctx))
+  }
+  
   /**
    * @implement This method can be overridden by concrete effect checkers. It allows to adapt /
    * change / customize effects that have been collected through `@pc` annotations of the

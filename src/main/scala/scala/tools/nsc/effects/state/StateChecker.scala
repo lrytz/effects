@@ -420,7 +420,7 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
       withEnv(applyEnv) {
         val fromApp = computeApplicationEffect(fun, targs, argss) 
         val res = sequence(argssEff, fromApp)
-        add((res._1, res._2, fromApp._3))
+        add(lattice.updateLocality(res, fromApp._3))
       }
     }
     
@@ -440,7 +440,7 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
        * Maybe the `@loc` annotations can be extended in future to support something like
        * `@loc(b.baz())`.
        */
-      (mappedPc._1, mappedPc._2, mappedLatent._3)
+      lattice.updateLocality(mappedPc, mappedLatent._3)
     }
   }
   
