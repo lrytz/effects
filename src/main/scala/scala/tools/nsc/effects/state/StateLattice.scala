@@ -63,7 +63,7 @@ abstract class StateLattice extends CompleteLattice {
       else if (eff._3.isFresh)
         (eff._1, eff._2, AnyLoc)
       else
-        eff
+        eff // param locations are ok to be mixed with effects (right?)
     } else {
       eff
     }

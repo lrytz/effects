@@ -1,0 +1,367 @@
+import annotation.effects._
+import annotation.effects.pc._
+import annotation.effects.state._
+
+def f(x: Int): Int @infer = x + 2
+
+class A
+new A { def f: Int @infer = 1 }
+
+
+
+@loc() @pc class A(x: Int)
+def mkA(a: A): A @infer = new A(1)
+
+
+
+
+=====================================
+
+
+
+import annotation.effects._
+import annotation.effects.pc._
+import annotation.effects.state._
+
+
+object l {
+ trait Lst[+A] {
+    def head: A @pure
+    def tail: Lst[A] @pure
+    def isEmpty: Boolean @pure
+    def map[B](f: A => B): Lst[B] @pure @pc(f.apply(%)) = {
+      if (isEmpty) Nl
+      else new Cns(f(head), tail.map(f))
+    }
+  }
+
+  @pure object Nl extends Lst[Nothing] {
+    def head: Nothing @pure = throw new Exception("head of empty list")
+    def tail: Lst[Nothing] @pure = throw new Exception("tail of empty list")
+    def isEmpty: Boolean @pure = true
+  }
+
+  @pure class Cns[+A](h: A, t: Lst[A]) extends Lst[A] {
+    def head: A @pure = h
+    def tail: Lst[A] @pure = t
+    def isEmpty: Boolean @pure = false
+  }
+}
+
+
+
+
+
+
+============================================================================================
+============================================================================================
+============================================================================================
+
+
+
+
+
+
+import annotation.effects._; import simple._; import xio._; import exceptions._; import pc._
+
+
+
+
+class A { def f(): Int @eff = 0 }
+
+
+val a = new A
+val a1: A @refine = new A { override def f(): Int @infer = 1 }
+
+   val a1: A { def f(): Int @noEff }
+
+
+val f: (Int => Int) @refine = (x: Int) => 1
+
+
+
+
+
+def m(a: A): Int @infer = a.f()
+
+
+
+
+def m(a: A): Int @infer = {
+  def n: Int @infer = a.f()
+  n
+}
+
+
+
+def t: Int @infer = a.f()
+def t: Int @infer = a1.f()
+def t: Int @infer = m(a)
+def t: Int @infer = m(a1)
+
+
+
+
+
+
+
+
+def m(a: A): Int @infer = {
+  def n: Int @infer = a.f()
+  def o: Int @infer = {
+    n
+  }
+  o
+}
+
+
+
+
+
+
+
+
+// OK
+
+def m(a: A): Int @pc() @infer = {
+  def n: Int @infer = a.f()
+  n
+}
+
+
+
+
+ECLIPSE
+=======
+
+
+
+NOTES
+=====
+
+Provide possibility to specify the concrete effect, even if ParamCalls are enabled (?). Example
+
+  def foo(x: A): B @pc() @effect-of-f = x.f()
+
+
+
+
+
+BUGS
+====
+
+--------- scoping bug ----------
+
+import annotation.effects._; import simple._; import xio._; import exceptions._; import pc._
+class A { def f(): Int @eff = 0 }
+val a = new A
+def m(a: A): Int @infer = a.f()
+def test: Int @infer = m(a)
+
+====
+
+Case classes, polymorphic classes. things break..
+
+
+abstract class L[A] {
+  def h: A @pure
+  def t: L[A] @pure
+}
+val he = new Error("h of N")
+val te = new Error("t of N")
+case object N extends L[Nothing] {
+  def h: Nothing @pure = throw he
+  def t: Nothing @pure = throw te
+}
+case class C[A](h: A, t: L[A]) extends L[A]
+
+
+====
+
+@infer in subclass should not infer more precise than the overridden.
+
+class C { def f: Int @noEff = 1 }
+class D extends C { override def f: Int @infer = 2 }
+
+ => infers @eff, but doesn't issue an error
+
+====
+
+
+
+
+TESTS
+=====
+
+----------- interplay: eff and xio --------------
+
+
+def f: Int @infer = {eff(); 1}
+def f: Int @infer = {doXio(); 1}
+
+
+val f81: (Int => Int => Int) @refine = (x: Int) => (y: Int) => x
+
+val f = () => { doXio(); () => { eff(); 1 } }
+// outer: xio, noeff;  inner :noxio, eff
+
+
+abstract class C { def f: Int }
+val c: C @refine = new C { def f = 1 }   // no refinement
+val c: C @refine = new C { def f: Int @infer = 1 } // C { def f: Int @noXio @noEff }
+
+
+val x = 1
+def f: Int @pure = x
+def f: Int @noEff @noXio = x
+
+
+
+
+--------------- exceptions --------------------
+
+
+class E1 extends Exception
+ class E11 extends E1
+ class E12 extends E1
+class E2 extends Exception
+
+val e1 = new E1
+ val e11 = new E11
+ val e12 = new E12
+val e2 = new E2
+
+
+def foo(): Int @infer = 1
+
+def foo(): Int @infer = try {
+  if (false) throw e1
+  else 1
+}
+
+def bar(): Int @infer = try {
+  foo()
+} catch {
+  case e: E1 => 3
+}
+
+def bar(): Int @infer = try {
+  foo()
+} catch {
+  case e: E2 => 3
+}
+
+
+
+---------- manual pc annotations ----------
+
+def f(x: Int): Int @pc(x.+(2)) = x + 1
+
+def f(x: Int): Int @pc(x.+(% : Int)) = x + 1
+
+
+
+---------- polymorphic function ---------------
+
+
+class A { def f(): Int @eff = 1 }
+class A1 extends A { override def f(): Int @noEff = 2 }
+
+def f(a: A): Int @infer = a.f()
+
+val someA = new A
+val someA1 = new A1
+
+def g(): Int @infer = f(someA)
+def g(): Int @infer = f(someA1)
+
+
+
+
+
+
+
+------ polymorphic map ----------
+
+abstract class L {
+  def h: Int @noEff
+  def t: L @noEff
+  def isEmpty: Boolean @noEff
+}
+
+val he = new Error("h of N")
+val te = new Error("t of N")
+
+object N extends L {
+  def h: Nothing @noEff = throw he
+  def t: Nothing @noEff = throw te
+  def isEmpty: Boolean @noEff = true
+}
+
+class C(val h: Int, val t: L) extends L {
+  def isEmpty: Boolean @noEff = false
+}
+
+
+// can't use @infer because it's recursive - IllegalCyclicReference
+
+def map(l: L, f: Int => Int): L @pc(f.apply(%), l.isEmpty, l.t) @noEff = {
+  if (l.isEmpty) l
+  else map(l.t, f)
+}
+
+val lst = new C(1, new C(2, N))
+
+
+val f1: (Int => Int) @refine = (x: Int) => 1
+def test: L @infer = map(lst, f1)
+
+val f2: (Int => Int) @refine = (x: Int) => { eff(); 1 }
+def test: L @infer = map(lst, f2)
+
+def test: L @infer = map(lst, (x: Int) => { eff(); 1 })   // eff
+def test: L @infer = map(lst, (x: Int) => 1)              // noEff
+
+
+
+---------- param forwarding ---------------
+
+class A { def f(): Int @eff = 1 }
+class B extends A { override def f(): Int @noEff = 2 }
+
+def m(a: A): Int @infer = a.f()
+def n(h: A): Int @infer = m(h)
+
+
+val someA = new A
+val someB = new B
+
+def test: Int @infer = m(someA)
+def test: Int @infer = m(someB)
+def test: Int @infer = n(someA)
+def test: Int @infer = n(someB)
+
+
+def o(i: A): Int @infer = { val k = i; m(k) }
+
+
+
+------------ local values -------------
+
+def f(): Int @infer = {
+  val a: (() => Int) @refine = () => 1
+  a()
+}
+
+
+
+
+
+
+
+
+
+
+
+
+

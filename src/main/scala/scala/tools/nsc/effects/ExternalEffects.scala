@@ -16,9 +16,13 @@ trait ExternalEffects[L <: CompleteLattice] { this: EffectChecker[L] =>
     else None
   }
   
+  
+  val ExceptionClass = definitions.getClass("java.lang.Exception")
+  
   def isPureMethod(sym: Symbol) = {
     isValueClass(sym.owner) ||
     (sym.isConstructor && sym.owner == ObjectClass) ||
+    (sym.owner == ExceptionClass) ||
     (sym.owner == StringClass) // strings are immutable. @TODO: exclude methods on string that actually do have a side-effect!
   }
   

@@ -374,6 +374,9 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
       val (fun, targs, argss) = decomposeApply(tree)
       val funSym = fun.symbol
       
+      if (funSym.toString == "method map")
+        println()
+      
       val funEff = qualEffect(fun, env)
       val funEnv = env.applyEffect(funEff)
       val funLoc = funEff._3 // @TODO: this only works "by chance", because we use "qualEffect", which actually returns the locality of the function's qualifier. maybe just rename "funLoc" to "qualLoc" to make things clear.

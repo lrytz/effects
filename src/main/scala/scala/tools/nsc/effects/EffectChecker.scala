@@ -370,17 +370,33 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       } else {
         // Check or infer the return type
         val rhs1 = refine(dd.rhs, ddTyper, sym, unit)
-        checkRefinement(dd, rhs1.tpe, symTp)
+
+        // Similar to `typeSig` in Namers. References to type parameters are given
+        // the skolemized symbol, while in sym.tpe we have the non-skolemized ones.
+        val rhsTp = sym.tpe match {
+          case PolyType(tparams @ (tp :: _), _) if tp.owner.isTerm =>
+            new analyzer.DeSkolemizeMap(tparams) mapOver rhs1.tpe
+          case _ =>
+            rhs1.tpe
+        }
+        checkRefinement(dd, rhsTp, symTp)
         rhs1
       }
 
-    // check the latent effect and return type for all overridden methods
-    for (os <- sym.allOverriddenSymbols) {
-      // @TODO: lattice.top when overridden does not have an effect annotation? more conservative would be lattice.bottom.
-      val overriddenEffect = fromAnnotation(os.tpe).getOrElse(lattice.top)
-      if (!lattice.lte(symEff, overriddenEffect))
-        overrideError(dd, os, overriddenEffect, symEff)
-      checkRefinement(dd, symTp, os.tpe.finalResultType)
+    val owner = sym.owner
+    if (owner.isClass) {
+      // check the latent effect and return type for all overridden methods
+      for (os <- sym.allOverriddenSymbols) {
+        // similar as in RefChecks.
+        val classType = owner.thisType
+        val symTp = classType.memberType(sym).finalResultType
+        val osTp = classType.memberType(os).finalResultType
+        // @TODO: lattice.top when overridden does not have an effect annotation? more conservative would be lattice.bottom.
+        val overriddenEffect = fromAnnotation(osTp).getOrElse(lattice.top)
+        if (!lattice.lte(symEff, overriddenEffect))
+          overrideError(dd, os, overriddenEffect, symEff)
+        checkRefinement(dd, symTp, osTp)
+      }
     }
 
     treeCopy.DefDef(dd, dd.mods, dd.name, dd.tparams, dd.vparamss, dd.tpt, refinedRhs)

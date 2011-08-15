@@ -20,7 +20,9 @@ abstract class PCCommons {
     else {
       // without atPhase there can be CyclicReferences
       val paramss = atPhase(currentRun.typerPhase)(currentMethod.paramss)
-      paramss.exists(_.exists(_ == param)) || isParam(param, currentMethod.owner)
+      // compare name and owner. params are not always the same symbol due
+      // to MethodType cloning, see comment in PCTracking near findIndexOf.
+      paramss.exists(_.exists(p => p.name == param.name && p.owner == param.owner)) || isParam(param, currentMethod.owner)
       
     }
   }

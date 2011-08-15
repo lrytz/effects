@@ -53,7 +53,14 @@ trait PCTracking[L <: CompleteLattice] extends EffectChecker[L] with ExternalPCE
             ()
           } else {
             // @TODO: implement param calls on `this`, i.e. @pc(this.bar())
-            val i = flatParamss.indexOf(param)
+            
+            /* Cannot just search for the symbol `param` in `flatParamss`. The reason is that
+             * there might be multiple symbols for the same parameter, the one in the MethodType
+             * can be different than the one assigned to trees. (When cloning a MethodType, new
+             * parameter symbols get created). Therefore, search for a symbol with identical owner
+             * and name.
+             */
+            val i = flatParamss.findIndexOf(psym => psym.owner == param.owner && psym.name == param.name)
             assert(i >= 0)
             flatArgss(i) match {
               case id @ Ident(_) if (isParam(id.symbol, ctx.owner.enclMethod)) =>
