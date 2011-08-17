@@ -896,22 +896,20 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * Returns the latent effect of a function application.
    */
   def latentEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context) = {
-    val sym = fun.symbol
-    val eff = fromAnnotation(sym.tpe)
-    val res = lookupExternalEffect(eff, sym, targs, argss, ctx)
-    res.getOrElse(lattice.top)
-  }
-  
-  /**
-   * @implement This method can be overridden by concrete effect checkers. It is
-   * intended to define side-effects (or purity) of functions defined in external
-   * libraries, e.g. the constructor of the class Object, or methods in value classes.
-   */
-  def lookupExternalEffect(effectFromSymbol: Option[Elem], sym: Symbol,
-                           targs: List[Tree], argss: List[List[Tree]], ctx: Context) = {
-    effectFromSymbol.orElse(lookupExternal(sym, targs, argss, ctx))
+    lookupLatentEffect(fun.symbol)
   }
 
+  /**
+   * The latent effect of `fun`, considering what is defined in the ExternalEffects
+   * trait. This method is also called from PCTracking to get the latent effect of
+   * a paraemter call.
+   */
+  def lookupLatentEffect(fun: Symbol) = {
+    val eff = fromAnnotation(fun.tpe)
+    val external = eff.orElse(lookupExternal(fun))
+    external.getOrElse(lattice.top)
+  }
+  
   /**
    * @implement This method can be overridden by concrete effect checkers. It allows
    * to adapt / change / customize the latent effect, which is obtained from a function's

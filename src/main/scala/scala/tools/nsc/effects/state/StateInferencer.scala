@@ -26,7 +26,7 @@ trait StateInferencer extends EffectInferencer[StateLattice] {
   override def setterEffect(sym: Symbol): Elem = {
     val owner = sym.owner
     val loc = {
-      if (owner.isModuleClass) SymLoc(owner.sourceModule)
+      if (owner.isModuleClass) SymLoc(owner.sourceModule) // @TODO: modules should just be considered global state (right? or, what about nested modules? those probably not...)
       else ThisLoc(owner)
     }
     // for abstract fields, there is no field symbol. so we check the annotation on the getter.

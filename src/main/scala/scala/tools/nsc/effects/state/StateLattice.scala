@@ -330,9 +330,11 @@ abstract class StateLattice extends CompleteLattice {
         (strong.toList match {
           case Nil => true
           case List((loc, from)) => loc == Fresh && from.isFresh
+          case _ => false
         }) && (weak.toList match {
           case Nil => true
           case List((loc, from)) => loc == Fresh && from.isFresh
+          case _ => false
         })
 
       case _ => false

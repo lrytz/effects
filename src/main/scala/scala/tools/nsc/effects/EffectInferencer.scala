@@ -333,50 +333,49 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
     }
     
     def inferConstr(sym: Symbol, tparams: Option[List[TypeDef]], impl: Template) {
-          // handle primary constructor of classes, modules and traits (for the last, it may be missing!)
+      // handle primary constructor of classes, modules and traits (for the last, it may be missing!)
 
-          val primaryConstr = sym.primaryConstructor
+      val primaryConstr = sym.primaryConstructor
           
-          if (primaryConstr != NoSymbol) { // interface-only traits don't have one
+      if (primaryConstr != NoSymbol) { // interface-only traits don't have one
 
-            val (templateTyper, constrTyper) = atOwner(sym) {
-              val classDefTyper = localTyper
-              tparams.map(tps => classDefTyper.reenterTypeParams(tps)) // for ModuleDef, there are none.
-              atOwner(sym) {
-                val cT = atOwner(primaryConstr)(localTyper)
-                (localTyper, cT)
-              }
-            }
-          
-            val hasNoE = fromAnnotation(sym.annotations).isEmpty
-            val inferE = hasNoE && inferConstructorEffect(primaryConstr)
-
-            if (inferE)
-              checker.inferEffect += primaryConstr
-            else
-              updateEffect(primaryConstr, fromAnnotation(sym.annotations).getOrElse(lattice.top))
-            
-            val primaryConstrDef = impl.body.collect({
-              case dd @ DefDef(_, _, _, _, _, rhs) if dd.symbol == primaryConstr => dd
-            }).head
-          
-            constrTyper.reenterTypeParams(primaryConstrDef.tparams)
-            constrTyper.reenterValueParams(primaryConstrDef.vparamss)
-
-            val tp = primaryConstr.tpe // don't move this valdef before the `updateEffect` above!
-            if (inferE)
-              primaryConstr.updateInfo(mkLazyType(_ => {
-                val eff = computePrimConstrEffect(impl, templateTyper, sym,
-                                                  primaryConstrDef.rhs, constrTyper, primaryConstr,
-                                                  unit)
-                val annotType = typeWithEffect(tp, eff)
-
-                // updateInfo removes the lazy type from the type history
-                primaryConstr.updateInfo(annotType)
-              }))
-            
+        val (templateTyper, constrTyper) = atOwner(sym) {
+          val classDefTyper = localTyper
+          tparams.map(tps => classDefTyper.reenterTypeParams(tps)) // for ModuleDef, there are none.
+          atOwner(sym) {
+            val cT = atOwner(primaryConstr)(localTyper)
+            (localTyper, cT)
           }
+        }
+          
+        val hasNoE = fromAnnotation(sym.annotations).isEmpty
+        val inferE = hasNoE && inferConstructorEffect(primaryConstr)
 
+        if (inferE)
+          checker.inferEffect += primaryConstr
+        else
+          updateEffect(primaryConstr, fromAnnotation(sym.annotations).getOrElse(lattice.top))
+            
+        val primaryConstrDef = impl.body.collect({
+          case dd @ DefDef(_, _, _, _, _, rhs) if dd.symbol == primaryConstr => dd
+        }).head
+          
+        constrTyper.reenterTypeParams(primaryConstrDef.tparams)
+        constrTyper.reenterValueParams(primaryConstrDef.vparamss)
+
+        val tp = primaryConstr.tpe // don't move this valdef before the `updateEffect` above!
+        if (inferE)
+          primaryConstr.updateInfo(mkLazyType(_ => {
+            val eff = computePrimConstrEffect(impl, templateTyper, sym,
+                                              primaryConstrDef.rhs, constrTyper, primaryConstr,
+                                              unit)
+            val annotType = typeWithEffect(tp, eff)
+
+            // updateInfo removes the lazy type from the type history
+            primaryConstr.updateInfo(annotType)
+          }))
+            
+        }
     }
   }
 

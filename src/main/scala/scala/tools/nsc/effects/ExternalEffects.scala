@@ -8,10 +8,10 @@ trait ExternalEffects[L <: CompleteLattice] { this: EffectChecker[L] =>
   import analyzer.Context
   
   /**
-   * @TODO: it would be better to return annotations, not effects of external
-   * symbols. that way we could support external annotations later.
+   * @TODO: it would probably be better to return annotations, not effects of
+   * external symbols. that way we could support external annotations later.
    */
-  def lookupExternal(sym: Symbol, targs: List[Tree], argss: List[List[Tree]], ctx: Context): Option[Elem] = {
+  def lookupExternal(sym: Symbol): Option[Elem] = {
     if (isPureMethod(sym)) Some(lattice.bottom)
     else None
   }

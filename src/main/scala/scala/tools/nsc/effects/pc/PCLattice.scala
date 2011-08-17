@@ -20,7 +20,7 @@ abstract class PCLattice extends CompleteLattice {
       case (PC(as), PC(bs)) =>
         var res = as
         for (bCall <- bs) {
-          val (existing, other) = res.partition(aCall => aCall.param == bCall.param && aCall.fun == bCall.fun)
+          val (existing, other) = res.partition(aCall => sameParam(aCall.param, bCall.param) && aCall.fun == bCall.fun)
           if (existing.isEmpty) {
             res = bCall :: other
           } else {
@@ -55,6 +55,15 @@ abstract class PCLattice extends CompleteLattice {
   sealed trait PCElem
   case class PC(pcs: List[PCInfo]) extends PCElem
   case object AnyPC extends PCElem
-  
+
+  /**
+   * True if `a` and `b` denote the same parameter.
+   * 
+   * We cannot just compare the symbols for equality. The reason is that there might be
+   * multiple symbols for the same parameter, the one in the MethodType can be different
+   * than the one assigned to trees. (When cloning a MethodType, new parameter symbols
+   * get created). Therefore, we commpare owner (the method) and name.
+   */
+  def sameParam(a: Symbol, b: Symbol) = a.owner == b.owner && a.name == b.name
 }
 

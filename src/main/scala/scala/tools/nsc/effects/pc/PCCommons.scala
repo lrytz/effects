@@ -12,7 +12,7 @@ abstract class PCCommons {
   }
 
   import global._
-  import pcLattice.{PC, PCInfo, AnyPC, Elem}
+  import pcLattice.{PC, PCInfo, AnyPC, Elem, sameParam}
 
   def isParam(param: Symbol, currentMethod: Symbol): Boolean = {
     if (currentMethod == NoSymbol) false
@@ -20,9 +20,8 @@ abstract class PCCommons {
     else {
       // without atPhase there can be CyclicReferences
       val paramss = atPhase(currentRun.typerPhase)(currentMethod.paramss)
-      // compare name and owner. params are not always the same symbol due
-      // to MethodType cloning, see comment in PCTracking near findIndexOf.
-      paramss.exists(_.exists(p => p.name == param.name && p.owner == param.owner)) || isParam(param, currentMethod.owner)
+      // "sameParam" compares name and owner (why: see its doc).
+      paramss.exists(_.exists(sameParam(_, param))) || isParam(param, currentMethod.owner)
       
     }
   }
