@@ -48,6 +48,13 @@ abstract class PCLattice extends CompleteLattice {
       })
   }
 
+  /* @TODO: this argtpss thing is not really correct...
+   *  - the function can also take type arguments, these are missing
+   *  - when copying a PCInfo effect from one function to another (see
+   *    PCChecker), the argtpss might have to be adapted. Singleton types,
+   *    references to type parameters, maybe other things as well might
+   *    change.
+   */
   sealed case class PCInfo(param: Symbol, fun: Symbol, argtpss: List[List[Type]])
   object PCInfo {
     implicit def singlePC(info: PCInfo): PC = PC(List(info))

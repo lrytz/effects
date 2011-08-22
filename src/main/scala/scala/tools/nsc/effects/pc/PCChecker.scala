@@ -17,7 +17,7 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
   import pcCommons._
   
   val lattice: pcLattice.type = pcLattice
-  import lattice.{PC, PCInfo, AnyPC}
+  import lattice.{PC, PCInfo, AnyPC, sameParam}
   
   val annotationClasses = List(pcClass, anyPcClass)
 
@@ -42,7 +42,7 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
   }
   
   override def latentEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context) = {
-    var acc: Elem = lattice.bottom
+    var res: Elem = lattice.bottom
     val currentMethod = ctx.owner.enclMethod
 
     /** 1. For nested functions, the ParamCalls of the callee might be
@@ -54,30 +54,39 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
      *       def f(x: String) = x.trim  // ParamCall `x.trim`
      *       def g(y: String) = f(y)    // ParamCall `y.trim`
      *
-     *  @TODO: param calls on final members not necessary; the effect can be computed immediately
+     * When there's no @pc annotation on the called function, we use lattice.bottom,
+     * i.e. @pc(). There are no @pc effects that can be translated to the current
+     * method as described above.
+     * 
+     * Similarly, when the called function has an @anyPc effect, we don't translate
+     * or copy it to the current method.
+     * 
+     * Instead, each concrete effect system will again look at the pc effect of the
+     * called function, and if it's AnyPC, or there's no annotation, it will include
+     * the effect of calling every method on every argument.
      */
-
     fromAnnotation(fun.symbol.tpe).getOrElse(lattice.bottom) match {
       case AnyPC => ()
       case PC(calls) =>
         for (PCInfo(param, member, argtpss) <- calls) {
-          // 1.
-          if (isParam(param, currentMethod))
-            acc = lattice.join(acc, PCInfo(param, member, argtpss))
-
-            // 2.
+          if (isParam(param, currentMethod)) {
+            // 1. the param in @pc is still a param in the current method
+            res = lattice.join(res, PCInfo(param, member, argtpss))
+          } else {
+            // 2. the param in @pc is not a param in the current method, therefore
+            //    it has to be a param of the called function.
             var j = -1
             val i = fun.symbol.paramss.indexWhere(l => {
-              j = l.indexOf(param)
+              j = l.indexWhere(sameParam(_, param))
               j >= 0
             })
-            // The parameter of a ParamCall effect can belong to an outer function!
-            if (argss.isDefinedAt(i) && argss(i).isDefinedAt(j))
-              argss(i)(j) match {
-                case id @ Ident(_) if (isParam(id.symbol, currentMethod)) =>
-                  acc = lattice.join(acc, PCInfo(id.symbol, member, argtpss))
-                case _ => ()
+            assert(argss.isDefinedAt(i) && argss(i).isDefinedAt(j), "pc on non-param: "+ member + " on "+ param +" while calling "+ fun)
+            argss(i)(j) match {
+              case id @ Ident(_) if (isParam(id.symbol, currentMethod)) =>
+                res = lattice.join(res, PCInfo(id.symbol, member, argtpss))
+              case _ => ()
             }
+          }
         }
     }
 
@@ -87,12 +96,14 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
     fun match {
       case Select(id @ Ident(_), _) =>
         if (isParam(id.symbol, currentMethod))
-          acc = lattice.join(acc, PCInfo(id.symbol, fun.symbol, argss map (_.map(_.tpe))))
+          // @TODO: this argss thing is too ad-hoc. either kick it out, or add targs as well,
+          // and make things work correctly. see comment on PCInfo.
+          res = lattice.join(res, PCInfo(id.symbol, fun.symbol, argss map (_.map(_.tpe))))
 
       case _ =>
         ()
     }
-    acc
+    res
   }
 
 }
