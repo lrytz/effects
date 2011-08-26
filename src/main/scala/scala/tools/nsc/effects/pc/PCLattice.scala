@@ -20,23 +20,19 @@ abstract class PCLattice extends CompleteLattice {
       case (PC(as), PC(bs)) =>
         var res = as
         for (bCall <- bs) {
-          val (existing, other) = res.partition(aCall => sameParam(aCall.param, bCall.param) && aCall.fun == bCall.fun)
+          val (existing, others) = res.partition(aCall => sameParam(aCall.param, bCall.param))
           if (existing.isEmpty) {
-            res = bCall :: other
+            res = bCall :: others
           } else {
-            res = PCInfo(bCall.param, bCall.fun, combine(bCall.argtpss, existing.head.argtpss)) :: other
+            val List(a) = existing
+            if (a.fun.isEmpty) a :: others
+            else if (a.fun == bCall.fun) a :: others
+            else if (bCall.fun.isEmpty) bCall :: others
+            else a :: bCall :: others
           }
         }
         PC(res)
     }
-  }
-
-  private def combine(tss1: List[List[Type]], tss2: List[List[Type]]): List[List[Type]] = {
-    (tss1, tss2).zipped.map((ts1, ts2) =>
-      (ts1, ts2).zipped.map((t1, t2) =>
-        lub(List(t1, t2))
-      )
-    )
   }
 
   def lte(a: Elem, b: Elem): Boolean = (a, b) match {
@@ -44,21 +40,19 @@ abstract class PCLattice extends CompleteLattice {
     case (_, AnyPC) => true
     case (PC(as), PC(bs)) =>
       as.forall(aCall => {
-        bs.exists(bCall => bCall.fun == aCall.fun) // @TODO: check paramtpss
+        bs.exists(bCall => lteInfo(aCall, bCall))
       })
   }
-
-  /* @TODO: this argtpss thing is not really correct...
-   *  - the function can also take type arguments, these are missing
-   *  - when copying a PCInfo effect from one function to another (see
-   *    PCChecker), the argtpss might have to be adapted. Singleton types,
-   *    references to type parameters, maybe other things as well might
-   *    change.
+  
+  /**
+   * @TODO: dok
    */
-  sealed case class PCInfo(param: Symbol, fun: Symbol, argtpss: List[List[Type]])
-  object PCInfo {
-    implicit def singlePC(info: PCInfo): PC = PC(List(info))
+  def lteInfo(a: PCInfo, b: PCInfo) = {
+    a.param == b.param && (a.fun == b.fun || b.fun.isEmpty)
   }
+
+  sealed case class PCInfo(param: Symbol, fun: Option[Symbol])
+
   sealed trait PCElem
   case class PC(pcs: List[PCInfo]) extends PCElem
   case object AnyPC extends PCElem

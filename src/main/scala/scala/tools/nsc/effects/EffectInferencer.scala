@@ -126,7 +126,7 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
    *
    * Since InfoTransformers are only applied at the next phase, we need to make
    * the EffectInferencer an InfoTransform, not the EffectChecker (where we actually
-   * look at the symbol's tyeps).
+   * look at the symbol's types).
    */
   def transformInfo(sym: Symbol, tp: Type): Type = tp
 
@@ -205,10 +205,10 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
           () // handled above (for abstract fields) or in `case ValDef` below
 
         case ModuleDef(_, _, impl) =>
-          inferConstr(sym, None, impl)
+          inferPrimConstr(sym, None, impl)
 
         case ClassDef(_, _, tparams, impl) =>
-          inferConstr(sym, Some(tparams), impl)
+          inferPrimConstr(sym, Some(tparams), impl)
 
         case DefDef(_, _, tparams, vparamss, tt @ TypeTree(), rhs) if !sym.isPrimaryConstructor =>
           /* See documentation on class EffectInferencer.
@@ -332,7 +332,7 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
       super.transform(tree)
     }
     
-    def inferConstr(sym: Symbol, tparams: Option[List[TypeDef]], impl: Template) {
+    def inferPrimConstr(sym: Symbol, tparams: Option[List[TypeDef]], impl: Template) {
       // handle primary constructor of classes, modules and traits (for the last, it may be missing!)
 
       val primaryConstr = sym.primaryConstructor

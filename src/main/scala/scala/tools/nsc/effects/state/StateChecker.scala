@@ -400,6 +400,10 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
 
         // @TODO: CaseDef, Match etc
           
+        // @TODO: LabelDef!!! while and do-while loops are expressed with Labels. In those, we need
+        // to apply the side-effects repeatidly until reaching a fixpoint (since state effects don't
+        // just add up, see `lattice.sequence`.)
+
         case _ =>
           super.traverse(tree)
       }

@@ -44,6 +44,10 @@ abstract class StateLattice extends CompleteLattice {
    *   }
    *
    * The effect is @strongAssign(x, {a, b})
+   * 
+   * @TODO: sequencing is probably more complicated, it needs the current environment!!!
+   * When the first effect assigns a variable, the second modifies it, then the env
+   * matters. or is this handled whenever sequence is used?
    */
   def sequence(a: Elem, b: Elem) =
     (joinStore(a._1, b._1), sequenceAssignment(a._2, b._2), b._3)

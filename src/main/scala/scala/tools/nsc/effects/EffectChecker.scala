@@ -4,8 +4,9 @@ import scala.tools.nsc._
 import transform.{ Transform, TypingTransformers }
 import plugins.PluginComponent
 import collection.{ mutable => m }
+import pc.PCTools
 
-abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with Transform with TypingTransformers with ExternalEffects[L] {
+abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with Transform with TypingTransformers with ExternalEffects[L] with PCTools[L] {
   // abstract val global: Global
   import global._
   import analyzer.{Typer, Context}
@@ -83,7 +84,9 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    */
 
   val lattice: L
-  type Elem = lattice.Elem
+  import lattice.Elem
+  
+  import pcLattice.{PCElem, AnyPC, PC, PCInfo}
 
   /**
    * @implement
@@ -899,11 +902,35 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     lookupLatentEffect(fun.symbol)
   }
 
+  
+  
   /**
-   * The latent effect of `fun`, considering what is defined in the ExternalEffects
-   * trait. This method is also called from PCTracking to get the latent effect of
+   * The latent effect of a function `fun`, considering
+   *  - the concrete effect annotations in the current effect domain
+   *  - the @pc annotations describing polymorphic effects
+   *  - effects of known functions, defined in the ExternalEffects trait
+   * 
+   * @TODO: update comment below
+   * This method is also used by PCTools to get the latent effect of
    * a paraemter call.
    */
+  def computeLatentEffect(fun: Symbol, visited: Set[Symbol] = Set()) = {
+    val annotated = fromAnnotation(fun.tpe).orElse(lookupExternal(fun))
+    
+    var res = annotated.getOrElse(lattice.top)
+    // @TODO: as an optimization, we coudl skip the follwing if "res" is top
+    val pcs = pcFromAnnotation(fun.tpe).orElse(lookupExternalPC(fun))
+    pcs match {
+      case None => ()
+      case Some(AnyPC) =>
+        // @TODO: anyParamCall on any parameter
+      case Some(PC(pcs)) =>
+        for (PCInfo(param, fun, argtpss) <- pcs) {
+          
+        }
+    }
+  }
+  
   def lookupLatentEffect(fun: Symbol) = {
     val eff = fromAnnotation(fun.tpe)
     val external = eff.orElse(lookupExternal(fun))

@@ -1,11 +1,11 @@
 package scala.tools.nsc.effects
 
-import scala.tools.nsc._
-
 trait ExternalEffects[L <: CompleteLattice] { this: EffectChecker[L] =>
   import global._
   import definitions._
   import analyzer.Context
+  import lattice.Elem
+  import pcLattice.{Elem => PCElem}
   
   /**
    * @TODO: it would probably be better to return annotations, not effects of
@@ -15,7 +15,11 @@ trait ExternalEffects[L <: CompleteLattice] { this: EffectChecker[L] =>
     if (isPureMethod(sym)) Some(lattice.bottom)
     else None
   }
-  
+
+  def lookupExternalPC(sym: Symbol): Option[PCElem] = {
+    if (isPureMethod(sym)) Some(pcLattice.bottom)
+    else None
+  }
   
   val ExceptionClass = definitions.getClass("java.lang.Exception")
   
