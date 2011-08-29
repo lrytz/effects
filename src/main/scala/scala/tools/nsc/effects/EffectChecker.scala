@@ -913,21 +913,41 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * @TODO: update comment below
    * This method is also used by PCTools to get the latent effect of
    * a paraemter call.
+   * 
+   * @TODO: for recursive invocations, this has to return the final set of visited methods.
    */
-  def computeLatentEffect(fun: Symbol, visited: Set[Symbol] = Set()) = {
-    val annotated = fromAnnotation(fun.tpe).orElse(lookupExternal(fun))
+  def computeLatentEffect(fun: Symbol, visited: Set[Symbol] = Set()): Elem = {
+    if (visited contains fun) lattice.bottom
+    else {
+      val annotated = fromAnnotation(fun.tpe).orElse(lookupExternal(fun))
     
-    var res = annotated.getOrElse(lattice.top)
-    // @TODO: as an optimization, we coudl skip the follwing if "res" is top
-    val pcs = pcFromAnnotation(fun.tpe).orElse(lookupExternalPC(fun))
-    pcs match {
-      case None => ()
-      case Some(AnyPC) =>
-        // @TODO: anyParamCall on any parameter
-      case Some(PC(pcs)) =>
-        for (PCInfo(param, fun, argtpss) <- pcs) {
-          
-        }
+      var res = annotated.getOrElse(lattice.top)
+      // @TODO: as an optimization, we could skip the follwing if "res" is top
+      val pcs = pcFromAnnotation(fun.tpe).orElse(lookupExternalPC(fun))
+      pcs match {
+        case None => ()
+        case Some(AnyPC) =>
+          // @TODO: anyParamCall on any parameter
+        case Some(PC(pcs)) =>
+          for (PCInfo(param, pcfun) <- pcs) {
+            pcfun match {
+              case None =>
+                // @TODO anyParamCall on param
+              case Some(f) =>
+                res = lattice.join(res, computeLatentEffect(f, visited + fun))
+            }
+          }
+      }
+      res
+    }
+  }
+  
+  def anyParamCall(param: Symbol, visited: Set[Symbol]) = {
+    val methods = param.tpe.members.filter(m => m.isMethod)
+    var res = lattice.bottom
+    var seen = visited
+    for (m <- methods) {
+      res = lattice.join(res, computeLatentEffect(m, seen))
     }
   }
   

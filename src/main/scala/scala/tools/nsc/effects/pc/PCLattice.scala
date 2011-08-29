@@ -20,15 +20,25 @@ abstract class PCLattice extends CompleteLattice {
       case (PC(as), PC(bs)) =>
         var res = as
         for (bCall <- bs) {
+          
+          // include `bCall` into `res`. First find `existing` paramCalls in res that have the same param
+          
           val (existing, others) = res.partition(aCall => sameParam(aCall.param, bCall.param))
           if (existing.isEmpty) {
             res = bCall :: others
           } else {
-            val List(a) = existing
-            if (a.fun.isEmpty) a :: others
-            else if (a.fun == bCall.fun) a :: others
-            else if (bCall.fun.isEmpty) bCall :: others
-            else a :: bCall :: others
+            existing.find(_.fun.isEmpty) match {
+              case Some(a) =>
+                // if there's an existing paramCall which covers all methods, take only that.
+                a :: others
+              case None =>
+                // if b covers all methods, take only b, drop the existing
+                if (bCall.fun.isEmpty) bCall :: others
+                // otherwise, if the same paramCall already exists, drop b
+                else if (existing.exists(_.fun == bCall.fun)) res
+                // otherwise, include b
+                else bCall :: res
+            }
           }
         }
         PC(res)
@@ -36,21 +46,29 @@ abstract class PCLattice extends CompleteLattice {
   }
 
   def lte(a: Elem, b: Elem): Boolean = (a, b) match {
-    case (AnyPC, _) => b == AnyPC
     case (_, AnyPC) => true
+    case (AnyPC, _) => false
     case (PC(as), PC(bs)) =>
       as.forall(aCall => {
         bs.exists(bCall => lteInfo(aCall, bCall))
       })
   }
-  
+
   /**
-   * @TODO: dok
+   * Test if the PCInfo a is smaller or equal to b.
+   *  - the params have to be the same
+   *  - the functions have to be the same, or b covers all functions
    */
   def lteInfo(a: PCInfo, b: PCInfo) = {
-    a.param == b.param && (a.fun == b.fun || b.fun.isEmpty)
+    sameParam(a.param, b.param) && (a.fun == b.fun || b.fun.isEmpty)
   }
 
+  /**
+   * Represents one parameter call annotation. If `fun` is None, the
+   * parameter call covers all methods on `param`, i.e. an annotation
+   * of the form
+   *   def f(a: A): R @pc(a)
+   */
   sealed case class PCInfo(param: Symbol, fun: Option[Symbol])
 
   sealed trait PCElem
