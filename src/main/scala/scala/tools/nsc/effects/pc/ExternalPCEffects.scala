@@ -1,7 +1,7 @@
+/*
 package scala.tools.nsc.effects
 package pc
 
-// @DELETE
 
 trait ExternalPCEffects[L <: CompleteLattice] { this: PCTracking[L] with ExternalEffects[L] =>
   import global._
@@ -15,3 +15,4 @@ trait ExternalPCEffects[L <: CompleteLattice] { this: PCTracking[L] with Externa
     else None
   }
 }
+*/

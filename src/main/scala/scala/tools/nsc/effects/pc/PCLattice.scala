@@ -72,7 +72,12 @@ abstract class PCLattice extends CompleteLattice {
   sealed case class PCInfo(param: Symbol, fun: Option[Symbol])
 
   sealed trait PCElem
-  case class PC(pcs: List[PCInfo]) extends PCElem
+  case class PC(pcs: List[PCInfo]) extends PCElem {
+    def this(pcInfo: PCInfo) = this(List(pcInfo))
+  }
+  object PC {
+    def apply(pcInfo: PCInfo) = new PC(pcInfo)
+  }
   case object AnyPC extends PCElem
 
   /**

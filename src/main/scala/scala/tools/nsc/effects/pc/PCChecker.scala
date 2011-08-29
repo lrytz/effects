@@ -11,48 +11,54 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
   override val runsBefore = List("pickler")
   val phaseName = "pcChecker"
 
-  val pcCommons = new PCCommons {
+/* @DELETE  val pcCommons = new PCCommons {
     val global: PCChecker.this.global.type = PCChecker.this.global
   }
-  import pcCommons._
-  
+  import pcCommons._ */
+
   val lattice: pcLattice.type = pcLattice
-  import lattice.{PC, PCInfo, AnyPC, sameParam}
+  import lattice.{PC, PCInfo, AnyPC, sameParam, Elem}
   
   val annotationClasses = List(pcClass, anyPcClass)
 
   val percent = definitions.getMember(definitions.getModule("scala.annotation.effects.pc"), "%".encode) 
   
   def fromAnnotation(annots: List[AnnotationInfo]): Option[Elem] = 
-    pcFromAnnotations(annots)
+    pcFromAnnotation(annots)
 
   def toAnnotation(elem: Elem): List[AnnotationInfo] = elem match {
     case AnyPC =>
       List(AnnotationInfo(anyPcClass.tpe, Nil, Nil))
-    case PC(xs) =>
-      val args = xs map(c => {
-        c.argtpss.foldLeft[Tree](Select(Ident(c.param), c.fun))(
-          (fun, args) => Apply(fun, args map (a => Typed(Ident(percent), TypeTree(a))))
-        )
+    case PC(xs) if !xs.isEmpty =>
+      val args = xs map(c => c.fun match {
+        case None =>
+          Ident(c.param)
+        case Some(f) =>
+          f.paramss.foldLeft[Tree](Select(Ident(c.param), f))(
+            // (fun, params) => Apply(fun, params map (p => Typed(Ident(percent), TypeTree(p.tpe))))
+            (fun, params) => Apply(fun, params map (_ => Ident(percent)))
+          )
       })
       // every tree needs a type for pickling. types should be correct, else later
       // phases might crash (refchecks). so let's run a typer.
       val typedArgs = args map (typer.typed(_))
       List(AnnotationInfo(pcClass.tpe, typedArgs, List()))
+    case _ =>
+      Nil // we don't need an annotation if there are no pc calls.
   }
   
-  override def latentEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context) = {
+  override def computeApplicationEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context) = {
     var res: Elem = lattice.bottom
     val currentMethod = ctx.owner.enclMethod
 
     /** 1. For nested functions, the ParamCalls of the callee might be
-     *     also ParamCalls of the caller. Example: both f and g have `x.trim`
-     *       def f(x: String) { def g = x.trim; g }
+     *     also ParamCalls of the caller. Example: both f and g have `x.m()`
+     *       def f(x: A): R @pc(x.m()) { def g = x.m(); g }
      *
      *  2. If a parameter is forwarded as argument to another function,
      *     we can convert the ParamCall. Example:
-     *       def f(x: String) = x.trim  // ParamCall `x.trim`
-     *       def g(y: String) = f(y)    // ParamCall `y.trim`
+     *       def f(a1: A) = a1.m()  // @pc(a1.m())
+     *       def g(a2: A) = f(a2)   // @pc(a2.m())
      *
      * When there's no @pc annotation on the called function, we use lattice.bottom,
      * i.e. @pc(). There are no @pc effects that can be translated to the current
@@ -68,23 +74,25 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
     fromAnnotation(fun.symbol.tpe).getOrElse(lattice.bottom) match {
       case AnyPC => ()
       case PC(calls) =>
-        for (PCInfo(param, member, argtpss) <- calls) {
-          if (isParam(param, currentMethod)) {
-            // 1. the param in @pc is still a param in the current method
-            res = lattice.join(res, PCInfo(param, member, argtpss))
+        for (pcInfo @ PCInfo(param, pcfun) <- calls) {
+          if (isParamCall(pcInfo, ctx)) {
+            // 1. the annotated param call is still a param call in the current method
+            res = lattice.join(res, PC(PCInfo(param, pcfun)))
           } else {
-            // 2. the param in @pc is not a param in the current method, therefore
-            //    it has to be a param of the called function.
             var j = -1
             val i = fun.symbol.paramss.indexWhere(l => {
               j = l.indexWhere(sameParam(_, param))
               j >= 0
             })
-            assert(argss.isDefinedAt(i) && argss(i).isDefinedAt(j), "pc on non-param: "+ member + " on "+ param +" while calling "+ fun)
-            argss(i)(j) match {
-              case id @ Ident(_) if (isParam(id.symbol, currentMethod)) =>
-                res = lattice.join(res, PCInfo(id.symbol, member, argtpss))
-              case _ => ()
+            if (i >= 0) {
+              assert(argss.isDefinedAt(i) && argss(i).isDefinedAt(j), "strange arguments when calling "+ pcfun + " on "+ param +": "+ argss)
+              argss(i)(j) match {
+                case id @ Ident(_) if isParamCall(PCInfo(id.symbol, pcfun), ctx) =>
+                  res = lattice.join(res, PC(PCInfo(id.symbol, pcfun)))
+                case th @ This(_) if isParamCall(PCInfo(th.symbol, pcfun), ctx) =>
+                  res = lattice.join(res, PC(PCInfo(th.symbol, pcfun)))
+                case _ => ()
+              }
             }
           }
         }
@@ -95,15 +103,41 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
      */
     fun match {
       case Select(id @ Ident(_), _) =>
-        if (isParam(id.symbol, currentMethod))
-          // @TODO: this argss thing is too ad-hoc. either kick it out, or add targs as well,
-          // and make things work correctly. see comment on PCInfo.
-          res = lattice.join(res, PCInfo(id.symbol, fun.symbol, argss map (_.map(_.tpe))))
+        if (isParamCall(PCInfo(id.symbol, Some(currentMethod)), ctx))
+          res = lattice.join(res, PC(PCInfo(id.symbol, Some(fun.symbol))))
 
+      case Select(th @ This(_), _) =>
+        if (isParamCall(PCInfo(th.symbol, Some(currentMethod)), ctx))
+          res = lattice.join(res, PC(PCInfo(th.symbol, Some(fun.symbol))))
       case _ =>
         ()
     }
     res
   }
 
+  /**
+   * Since @pc annotations are not yet propagated to nested methods, we need to look at
+   * the entire method owner chain to find out if a given paramCall is annotated as such.
+   * 
+   * In later effect checking phases, this is not necessary. See documentation of method
+   * `isParamCall` in PCTools.
+   */
+  override def isParamCall(paramCall: PCInfo, ctx: Context): Boolean = {
+    def test(meth: Symbol): Boolean = {
+      if (meth == NoSymbol) false
+      else {
+        atPhase(currentRun.typerPhase) {
+          pcFromAnnotation(meth.tpe).orElse(lookupExternalPC(meth))
+        } match {
+          case None => test(meth.enclMethod)
+          case Some(AnyPC) => true
+          case Some(PC(pcs)) =>
+            pcs.exists(pc => {
+              pcLattice.lteInfo(paramCall, pc)
+            }) || test(meth.enclMethod)
+        }
+      }
+    }
+    test(ctx.owner.enclMethod)
+  }
 }

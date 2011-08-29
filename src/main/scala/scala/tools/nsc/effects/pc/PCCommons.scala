@@ -1,3 +1,4 @@
+/*
 package scala.tools.nsc.effects
 package pc
 
@@ -78,3 +79,4 @@ abstract class PCCommons {
   }
 
 }
+*/

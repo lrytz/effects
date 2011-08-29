@@ -1,3 +1,4 @@
+/*
 package scala.tools.nsc.effects
 package pc
 
@@ -10,6 +11,8 @@ trait PCTracking[L <: CompleteLattice] extends EffectChecker[L] with ExternalPCE
   }
   import pcCommons._
   import pcLattice.{PCElem, PC, PCInfo, AnyPC, sameParam}
+  
+  import lattice.Elem
 
   
   override def adaptToEffectPolymorphism(latent: Elem, fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context): Elem = fun match {
@@ -161,3 +164,5 @@ trait PCTracking[L <: CompleteLattice] extends EffectChecker[L] with ExternalPCE
       case (res, param) => lattice.top
     }
 }
+
+*/

@@ -86,7 +86,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   val lattice: L
   import lattice.Elem
   
-  import pcLattice.{PCElem, AnyPC, PC, PCInfo}
+  import pcLattice.{PCElem, AnyPC, PC, PCInfo, sameParam}
 
   /**
    * @implement
@@ -875,19 +875,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       traverseQual(fun)
       traverseTrees(targs)
       for (args <- argss) traverseTrees(args)
-      add(computeApplicationEffect(fun, targs, argss))
-    }
-    
-    /**
-     * @implement This method can be overridden by effect traversers.
-     * 
-     * Extracts the latent effect of the function being applied and adapts it using
-     * `adaptLatentEffect` and `adaptToPolymorphism`.
-     */
-    protected def computeApplicationEffect(fun: Tree, targs: List[Tree] = Nil, argss: List[List[Tree]] = Nil) = {
-      val latent = latentEffect(fun, targs, argss, rhsTyper.context1)
-      val adapted = adaptLatentEffect(latent, fun, targs, argss, rhsTyper.context1)
-      adaptToEffectPolymorphism(adapted, fun, targs, argss, rhsTyper.context1)
+      add(computeApplicationEffect(fun, targs, argss, rhsTyper.context1))
     }
   }
 
@@ -898,64 +886,192 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * 
    * Returns the latent effect of a function application.
    */
-  def latentEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context) = {
+/* @DELETE  def latentEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context) = {
     lookupLatentEffect(fun.symbol)
   }
+*/
 
-  
-  
+  /**
+   * @implement This method can be overridden by effect traversers.
+   * 
+   * Computes the effect of applying `fun` to the arguments `targs` and `argss`.
+   * This method implements effect polymorphism based on `@pc` annotations.
+   */
+  protected def computeApplicationEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context): Elem = {
+    if (isParamCall(fun, ctx)) {
+      /* If the receiver of the function is a parameter then it's a parameter call. Therefore
+       * we can ignore the effect, it is represented by the @pc annotation (which is already
+       * present from the PCChecker phase). Example:
+       * 
+       *   def foo(a: A): B @pc(a.bar) = a.bar
+       * 
+       * The side-effect of the application `a.bar` does not have to be annotated, it's covered
+       * by the `@pc(a.bar)` annotation.
+       */
+      lattice.bottom
+    } else {
+      val sym = fun.symbol
+      computeLatentEffect(sym, ctx, trees = Some((fun, targs, argss)))._1
+    }
+/*
+      val latent = latentEffect(fun, targs, argss, rhsTyper.context1)
+      val adapted = adaptLatentEffect(latent, fun, targs, argss, rhsTyper.context1)
+      adaptToEffectPolymorphism(adapted, fun, targs, argss, rhsTyper.context1)
+*/
+  }
+
   /**
    * The latent effect of a function `fun`, considering
    *  - the concrete effect annotations in the current effect domain
    *  - the @pc annotations describing polymorphic effects
    *  - effects of known functions, defined in the ExternalEffects trait
-   * 
+   *
+   * @param fun
+   * @param ctx
+   * @param visited  The methods whose effect is already included
+   * @param trees    The function, targs and argss trees, if available (for top-level / non-param-calls)
+   * @param pcInfo   The PCInfo if the call is a param call
+   *
    * @TODO: update comment below
    * This method is also used by PCTools to get the latent effect of
    * a paraemter call.
-   * 
-   * @TODO: for recursive invocations, this has to return the final set of visited methods.
    */
-  def computeLatentEffect(fun: Symbol, visited: Set[Symbol] = Set()): Elem = {
-    if (visited contains fun) lattice.bottom
+  def computeLatentEffect(fun: Symbol, ctx: Context, visited: Set[Symbol] = Set(),
+                          trees: Option[(Tree, List[Tree], List[List[Tree]])] = None,
+                          pcInfo: Option[PCInfo] = None): (Elem, Set[Symbol]) = {
+    if (visited contains fun) (lattice.bottom, visited)
     else {
       val annotated = fromAnnotation(fun.tpe).orElse(lookupExternal(fun))
-    
       var res = annotated.getOrElse(lattice.top)
+      var seen = visited
+
+      trees map { case (funTree, targs, argss) =>
+        res = adaptLatentEffect(res, funTree, targs, argss, ctx)
+      }
+      pcInfo map { case i =>
+        res = adaptPcEffect(res, i, ctx)
+      }
+        
       // @TODO: as an optimization, we could skip the follwing if "res" is top
       val pcs = pcFromAnnotation(fun.tpe).orElse(lookupExternalPC(fun))
       pcs match {
         case None => ()
-        case Some(AnyPC) =>
-          // @TODO: anyParamCall on any parameter
+
         case Some(PC(pcs)) =>
-          for (PCInfo(param, pcfun) <- pcs) {
-            pcfun match {
-              case None =>
-                // @TODO anyParamCall on param
-              case Some(f) =>
-                res = lattice.join(res, computeLatentEffect(f, visited + fun))
+          for (info @ PCInfo(param, pcfun) <- pcs) {
+            /* The annotated paramCall is annotated as a paramCall in the current context. Then we
+             * don't need to consider its effect, it's already expressed by an outer @pc annotation.
+             * Example:
+             * 
+             *   def m(a: A): R @pc(a.f()) = { def n(): R @pc(a.f()) = a.f(); n() }
+             * 
+             * In the call to n(), there's a @pc(a.f()), this param call is also annotated on the
+             * outer method m.
+             */
+            if (!isParamCall(info, ctx)) {
+
+              var forwardedParam = false
+              var arg: Option[Tree] = None
+              if (trees.isDefined) {
+                /* Check if the argument expression is an `Ident` to another parameter, and
+                 * there's a @pc  annotation for that. Then we don't have to expand the pc
+                 * effect. Example:
+                 *
+                 *   def m(a1: A): C @pc(a1.foo) = { a1.foo() }
+                 *   def g(a2: A): C @pc(a2.foo) = { m(a2) }
+                 * 
+                 * In the call m(a1), m's @pc effect is not expanded.
+                 */
+                val Some((_, _, argss)) = trees
+                val flatArgss = argss.flatten
+                val flatParamss = fun.paramss.flatten
+                val i = flatParamss.indexWhere(sameParam(_, param))
+                assert(i >= 0)
+                arg = Some(flatArgss(i))
+                arg.get match {
+                  case id @ Ident(_) if isParamCall(PCInfo(id.symbol, pcfun), ctx) =>
+                    forwardedParam = true
+                  case th @ This(_) if isParamCall(PCInfo(th.symbol, pcfun), ctx) =>
+                    forwardedParam = true
+                  case _ =>
+                    ()
+                }
+              }
+              
+              if (!forwardedParam) {
+                pcfun match {
+                  case None =>
+                    val (e, v) = anyParamCall(param, ctx, seen)
+                    seen = v
+                    res = lattice.join(res, e)
+
+                  case Some(f) =>
+                    /* Include the effect of a parameter call. The effect might be more specific than
+                     * the effect of the `pcfun` symbol, in case that symbol is refined / overridden
+                     * in the actual type of arg. Example:
+                     * 
+                     *   pcfun = Function1.apply
+                     *   arg = (x => x + 1)
+                     *   arg.tpe = (Int => Int) { def apply(x$1: Int): Int @loc(Fresh) @pc() }
+                     * 
+                     * Then, we'd like to find the symbol of the `apply` method in the refinement,
+                     * since it's effect is more specific.
+                     * 
+                     * This is done by searching for all symbols with the right name and then filtering
+                     * the one that overrides `pcfun`. However, if there's no overriding (more specific)
+                     * symbol, we might actually find `pcfun` itself!
+                     */
+                    
+                    val funSym = arg match {
+                      case Some(a) => a.tpe.member(f.name).suchThat(m => m.overriddenSymbol(f.owner) == f || m == f)
+                      case _ => f
+                    }
+                    seen += funSym
+                    val (e, _) = computeLatentEffect(funSym, ctx, seen, pcInfo = Some(info))
+                    res = lattice.join(res, e)
+                }
+              }
             }
           }
+        
+        case Some(AnyPC) if (!hasAnyPCAnnotation(ctx)) =>
+          for (p <- fun.tpe.paramss.flatten) {
+            val (e, v) = anyParamCall(p, ctx, seen)
+            seen = v
+            res = lattice.join(res, e)
+          }
       }
-      res
+      (res, seen)
     }
   }
-  
-  def anyParamCall(param: Symbol, visited: Set[Symbol]) = {
+
+  /**
+   * @TODO: could (should!) be more precise with AnyPC by taking into account the argument type.
+   * Example:
+   * 
+   *   def m(f: A => B): B @anyPc = ...
+   *   f(a => new B)
+   *
+   * Here, we should consider the apply method of the anonymous function, which is pure, not the
+   * apply method of Function1.
+   */
+  def anyParamCall(param: Symbol, ctx: Context, visited: Set[Symbol]): (Elem, Set[Symbol]) = {
     val methods = param.tpe.members.filter(m => m.isMethod)
     var res = lattice.bottom
     var seen = visited
     for (m <- methods) {
-      res = lattice.join(res, computeLatentEffect(m, seen))
+      val (e, v) = computeLatentEffect(m, ctx, seen, pcInfo = Some(PCInfo(param, Some(m))))
+      seen = v
+      res = lattice.join(res, e)
     }
+    (res, seen)
   }
   
-  def lookupLatentEffect(fun: Symbol) = {
+/* @DELETE  def lookupLatentEffect(fun: Symbol) = {
     val eff = fromAnnotation(fun.tpe)
     val external = eff.orElse(lookupExternal(fun))
     external.getOrElse(lattice.top)
-  }
+  }*/
   
   /**
    * @implement This method can be overridden by concrete effect checkers. It allows
@@ -967,15 +1083,27 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     eff
   }
   
+  /**
+   * @implement This method can be overridden by concrete effect checkers. It allows to adapt /
+   * change / customize effects that have been collected through `@pc` annotations.
+   * 
+   * By default, returns `eff` unmodified.
+   */
+  def adaptPcEffect(eff: Elem, pc: PCInfo, ctx: Context): Elem = {
+    eff
+  }
+
+  
  /**
   * This method is overridden by PCTracking, which will adapt the effect of an application
   * expression mainly in two ways:
   *  - remove the effect if it's a parameter call
   *  - add effects caused by `@pc` annotations on `fun`
   */
-  def adaptToEffectPolymorphism(latent: Elem, fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context): Elem = {
+/*  def adaptToEffectPolymorphism(latent: Elem, fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context): Elem = {
     latent
   }
+*/
 
   /**
    * *************

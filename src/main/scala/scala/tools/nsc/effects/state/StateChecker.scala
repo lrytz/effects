@@ -21,6 +21,7 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
                   Location, SymLoc, Fresh, ThisLoc,
                   Store, StoreAny, StoreLoc,
                   Assignment, AssignAny, AssignLoc,
+                  Elem,
                   join, joinStore, joinAssignment, joinLocality,
                   sequence,
                   mkElem}
@@ -472,7 +473,7 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
       }
     }
     
-    override def computeApplicationEffect(fun: Tree, targs: List[Tree] = Nil, argss: List[List[Tree]] = Nil) = {
+    override def computeApplicationEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]]) = {
       val latent = latentEffect(fun, targs, argss, rhsTyper.context1)
       val mappedLatent = adaptLatentEffect(latent, fun, targs, argss, rhsTyper.context1)
       val mappedPc = adaptToEffectPolymorphism(mappedLatent, fun, targs, argss, rhsTyper.context1)
