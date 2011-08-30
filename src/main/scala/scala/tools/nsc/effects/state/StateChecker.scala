@@ -5,7 +5,7 @@ import scala.tools.nsc._
 import scala.collection.{immutable => i}
 import pc._
 
-class StateChecker(val global: Global) extends EffectChecker[StateLattice] with ConvertAnnots with PCTracking[StateLattice] {
+class StateChecker(val global: Global) extends EffectChecker[StateLattice] with ConvertAnnots {
   import global._
   import analyzer.{Typer, Context}
 
@@ -27,7 +27,6 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
                   mkElem}
 
   
-  import pcCommons._
   import pcLattice.{PC, PCInfo, AnyPC}
   
   
@@ -420,7 +419,7 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
       val (fun, targs, argss) = decomposeApply(tree)
       val funSym = fun.symbol
       
-      if (funSym.toString == "method setK") // @DEBUG
+      if (funSym.toString == "method map") // @DEBUG
         println()
       
       val funEff = qualEffect(fun, env)
@@ -467,13 +466,13 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
       val applyEnv = argssEnv.mapLocations(paramsMap)
 
       withEnv(applyEnv) {
-        val fromApp = computeApplicationEffect(fun, targs, argss) 
+        val fromApp = computeApplicationEffect(fun, targs, argss, rhsTyper.context1)
         val res = sequence(argssEff, fromApp)
         add(lattice.updateLocality(res, fromApp._3))
       }
     }
     
-    override def computeApplicationEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]]) = {
+    /*override def computeApplicationEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]]) = {
       val latent = latentEffect(fun, targs, argss, rhsTyper.context1)
       val mappedLatent = adaptLatentEffect(latent, fun, targs, argss, rhsTyper.context1)
       val mappedPc = adaptToEffectPolymorphism(mappedLatent, fun, targs, argss, rhsTyper.context1)
@@ -490,7 +489,7 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
        * `@loc(b.baz())`.
        */
       lattice.updateLocality(mappedPc, mappedLatent._3)
-    }
+    }*/
   }
   
   private var currentEnv: Env = null
@@ -549,9 +548,13 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
     val paramLoc = SymLoc(pc.param)
     // @TODO: fix when enabling PC calls on `this`
 
-    val thisLocality = currentEnv.lookup(paramLoc).getOrElse(AnyLoc)
-    val map: Map[Location, Locality] = Map(ThisLoc(pc.fun.owner) -> thisLocality) ++ (pc.fun.paramss.flatten.map(p => SymLoc(p) -> AnyLoc))
-    val pcEnv = currentEnv.mapLocations(map)
+    val pcEnv = pc.fun match {
+      case None => AnyEnv
+      case Some(fun) =>
+        val thisLocality = currentEnv.lookup(paramLoc).getOrElse(AnyLoc)
+        val map: Map[Location, Locality] = Map(ThisLoc(fun.owner) -> thisLocality) ++ (fun.paramss.flatten.map(p => SymLoc(p) -> AnyLoc))
+        currentEnv.mapLocations(map)
+    }
     mapLocalities(eff, pcEnv, ctx)
   }
 

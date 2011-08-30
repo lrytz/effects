@@ -14,6 +14,7 @@ class ExceptionsChecker(val global: Global) extends EffectChecker[ExceptionsLatt
   val lattice = new ExceptionsLattice {
     val global: ExceptionsChecker.this.global.type = ExceptionsChecker.this.global
   }
+  import lattice.Elem
 
   val throwsClass = definitions.getClass("scala.annotation.effects.exceptions.throws")
   val scalaThrowsClass = definitions.getClass("scala.throws")

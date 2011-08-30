@@ -12,6 +12,7 @@ class XioChecker(val global: Global) extends EffectChecker[XioLattice] {
 
 
   val lattice = new XioLattice
+  import lattice.Elem
 
 
   // encoding as annotations

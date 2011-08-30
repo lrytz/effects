@@ -5,7 +5,7 @@ import scala.tools.nsc._
 
 class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCCommons[PCLattice] */ {
   import global._
-  import analyzer.Context
+  import analyzer.{Context, Typer}
 
   val runsAfter = List("pcInferencer")
   override val runsBefore = List("pickler")
@@ -46,6 +46,11 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
     case _ =>
       Nil // we don't need an annotation if there are no pc calls.
   }
+  
+  override def nonAnnotatedEffect: Elem = lattice.bottom
+  
+  override def checkDefDef(dd: DefDef, ddTyper: Typer, unit: CompilationUnit): DefDef = dd
+  override def checkValDef(vd: ValDef, vdTyper: Typer, unit: CompilationUnit): ValDef = vd
   
   override def computeApplicationEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context) = {
     var res: Elem = lattice.bottom

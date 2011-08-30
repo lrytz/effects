@@ -32,7 +32,7 @@ class EffectsPlugin(val global: Global) extends Plugin {
   val pcInferencer = new {
     // early def: the EffectInferencer constructor accesses "checker.global"
     val checker = pcChecker
-  } with EffectInferencer[pc.PCLattice] {
+  } with pc.PCInferencer {
     val runsAfter = List("superaccessors")
     val phaseName = "pcInferencer"
   }
@@ -62,7 +62,7 @@ class EffectsPlugin(val global: Global) extends Plugin {
     val phaseName = "exceptionsInferencer"
   }
  */
-  
+
   val stateChecker = new state.StateChecker(global)
   val stateInferencer = new {
     val checker = stateChecker

@@ -9,6 +9,7 @@ trait ConvertAnnots { this: StateChecker =>
                   Location, SymLoc, Fresh, ThisLoc,
                   Store, StoreAny, StoreLoc,
                   Assignment, AssignAny, AssignLoc,
+                  Elem,
                   join, joinStore, joinAssignment, joinLocality}
 
   /* Annotation Classes */

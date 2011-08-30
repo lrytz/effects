@@ -101,6 +101,7 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
 
   val checker: EffectChecker[L]
   import checker._
+  import lattice.Elem
 
   val global: checker.global.type = checker.global
   import global._
@@ -250,7 +251,7 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
           if (inferE)
             checker.inferEffect += sym
           else if (hasNoE)
-            updateEffect(sym, lattice.top)
+            updateEffect(sym, nonAnnotatedEffect)
           else if (sym.isConstructor)
             // for (non-primary, these are handled above in a separate pattern) constructors,
             // copy the effect annotations from the constructor symbol to the return type.
@@ -341,7 +342,21 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
 
         val (templateTyper, constrTyper) = atOwner(sym) {
           val classDefTyper = localTyper
-          tparams.map(tps => classDefTyper.reenterTypeParams(tps)) // for ModuleDef, there are none.
+          /* @TODO: reentering the type params (below) causes the following ambiguity bug
+           *
+           *   class C[A](x: A)
+           *   class A
+           *   def f(a: A) = 1
+           *
+           *   error: reference to A is ambiguous;
+           *   it is both defined in class C and imported subsequently by import A
+           *        def f(a: A) = 1
+           *                 ^
+           * 
+           * so it's disabled for now. i'm not sure if it is actually needed, i just put it there
+           * because it's also done in `typedClassDef` in the typer.
+           */
+          // tparams.map(tps => classDefTyper.reenterTypeParams(tps)) // for ModuleDef, there are none.
           atOwner(sym) {
             val cT = atOwner(primaryConstr)(localTyper)
             (localTyper, cT)
@@ -354,7 +369,7 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
         if (inferE)
           checker.inferEffect += primaryConstr
         else
-          updateEffect(primaryConstr, fromAnnotation(sym.annotations).getOrElse(lattice.top))
+          updateEffect(primaryConstr, fromAnnotation(sym.annotations).getOrElse(nonAnnotatedEffect))
             
         val primaryConstrDef = impl.body.collect({
           case dd @ DefDef(_, _, _, _, _, rhs) if dd.symbol == primaryConstr => dd

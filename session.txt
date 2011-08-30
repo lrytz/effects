@@ -51,6 +51,9 @@ object l {
 
 
 import l._
+var x = 1
+def map1: Lst[Int] @infer = Nl.map(y => { x = 2; y })
+
 val list = new Cns(1, new Cns(2, Nl))
 def map1: Lst[Int] @infer = list.map(x => x + 1)
 
@@ -68,7 +71,6 @@ def f2(c: Counter): Int @infer = { c.inc(); c.get() }
 
 
 
-// TODO: the PC calls get lost !!! PC needs PC
 def map2(c: Counter): Lst[Int] @infer = list.map(x => x + c.get())
 def map3(c: Counter): Lst[Int] @infer = list.map(x => { c.inc(); x + c.get() })
 
@@ -136,6 +138,10 @@ def t2: Int @infer = f2(c1)
 
 
 
+
+
+============================================================================================
+============================================================================================
 
 
 

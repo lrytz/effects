@@ -118,6 +118,11 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   def fromAnnotation(tpe: Type): Option[Elem] = fromAnnotation(tpe.finalResultType.annotations)
 
   /**
+   * The effect which is used whenever there's no effect annotation.
+   */
+  def nonAnnotatedEffect: Elem = lattice.top
+  
+  /**
    * @implement
    */
   def toAnnotation(elem: Elem): List[AnnotationInfo]
@@ -348,7 +353,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   def checkDefDef(dd: DefDef, ddTyper: Typer, unit: CompilationUnit): DefDef = {
     val sym = dd.symbol
 
-    val symEff = fromAnnotation(sym.tpe).getOrElse(abort("no latent effect annotation on " + sym))
+    val symEff = fromAnnotation(sym.tpe).orElse(lookupExternal(sym)).getOrElse(abort("no latent effect annotation on " + sym))
     val symTp = sym.tpe.finalResultType // @TODO: what about type parameters? def f[T](x: T): T = x
 
     if (!inferEffect(sym)) {
@@ -394,8 +399,8 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
         val classType = owner.thisType
         val symTp = classType.memberType(sym).finalResultType
         val osTp = classType.memberType(os).finalResultType
-        // @TODO: lattice.top when overridden does not have an effect annotation? more conservative would be lattice.bottom.
-        val overriddenEffect = fromAnnotation(osTp).getOrElse(lattice.top)
+        // @TODO: lattice.top (nonAnnotatedEffect) when overridden does not have an effect annotation? more conservative would be lattice.bottom.
+        val overriddenEffect = fromAnnotation(osTp).orElse(lookupExternal(os)).getOrElse(nonAnnotatedEffect)
         if (!lattice.lte(symEff, overriddenEffect))
           overrideError(dd, os, overriddenEffect, symEff)
         checkRefinement(dd, symTp, osTp)
@@ -910,8 +915,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
        */
       lattice.bottom
     } else {
-      val sym = fun.symbol
-      computeLatentEffect(sym, ctx, trees = Some((fun, targs, argss)))._1
+      computeLatentEffect(fun.symbol, ctx, trees = Some((fun, targs, argss)))._1
     }
 /*
       val latent = latentEffect(fun, targs, argss, rhsTyper.context1)
@@ -942,7 +946,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     if (visited contains fun) (lattice.bottom, visited)
     else {
       val annotated = fromAnnotation(fun.tpe).orElse(lookupExternal(fun))
-      var res = annotated.getOrElse(lattice.top)
+      var res = annotated.getOrElse(nonAnnotatedEffect)
       var seen = visited
 
       trees map { case (funTree, targs, argss) =>
@@ -971,7 +975,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
             if (!isParamCall(info, ctx)) {
 
               var forwardedParam = false
-              var arg: Option[Tree] = None
+              var arg: Option[Tree] = None // @TODO: fix for param calls on `this`, then we don't have an `arg`...
               if (trees.isDefined) {
                 /* Check if the argument expression is an `Ident` to another parameter, and
                  * there's a @pc  annotation for that. Then we don't have to expand the pc
@@ -1026,8 +1030,8 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
                       case Some(a) => a.tpe.member(f.name).suchThat(m => m.overriddenSymbol(f.owner) == f || m == f)
                       case _ => f
                     }
-                    seen += funSym
                     val (e, _) = computeLatentEffect(funSym, ctx, seen, pcInfo = Some(info))
+                    seen += funSym
                     res = lattice.join(res, e)
                 }
               }
@@ -1124,8 +1128,8 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     override val inferenceOnly = true
 
     def annotationsConform(tpe1: Type, tpe2: Type) = {
-      val eff1 = fromAnnotation(tpe1.annotations).getOrElse(lattice.top)
-      val eff2 = fromAnnotation(tpe2.annotations).getOrElse(lattice.top)
+      val eff1 = fromAnnotation(tpe1.annotations).getOrElse(nonAnnotatedEffect)
+      val eff2 = fromAnnotation(tpe2.annotations).getOrElse(nonAnnotatedEffect)
       lattice.lte(eff1, eff2)
     }
     

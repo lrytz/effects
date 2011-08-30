@@ -11,6 +11,8 @@ trait PCTools[L <: CompleteLattice] { this: EffectChecker[L] =>
 
   import pcLattice.{PC, PCInfo, AnyPC, PCElem, sameParam}
 
+  lazy val pcPhase = currentRun.phaseNamed("pcChecker")
+  
   /**
    * Convert a @pc annotation to a PCElem
    */
@@ -106,10 +108,11 @@ trait PCTools[L <: CompleteLattice] { this: EffectChecker[L] =>
 
     case _ => false
   }
-  
+
   def isParamCall(paramCall: PCInfo, ctx: Context): Boolean = {
     val currentMethod = ctx.owner.enclMethod
-    pcFromAnnotation(currentMethod.tpe).orElse(lookupExternalPC(currentMethod)) match {
+    val tp = atPhase(pcPhase)(currentMethod.tpe)
+    pcFromAnnotation(tp).orElse(lookupExternalPC(currentMethod)) match {
       case None => false
       case Some(AnyPC) => true
       case Some(PC(pcs)) =>
@@ -121,7 +124,8 @@ trait PCTools[L <: CompleteLattice] { this: EffectChecker[L] =>
   
   def hasAnyPCAnnotation(ctx: Context): Boolean = {
     val currentMethod = ctx.owner.enclMethod
-    pcFromAnnotation(currentMethod.tpe).orElse(lookupExternalPC(currentMethod)) match {
+    val tp = atPhase(pcPhase)(currentMethod.tpe)
+    pcFromAnnotation(tp).orElse(lookupExternalPC(currentMethod)) match {
       case Some(AnyPC) => true
       case _ => false
     }
