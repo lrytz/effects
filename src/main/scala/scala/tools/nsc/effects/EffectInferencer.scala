@@ -220,8 +220,18 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
           
           // A typer on a DefDef is only works correctly after entering the parameters.
           // The same is done in `typedDefDef` in the typer.
-          rhsTyper.reenterTypeParams(tparams)
-          rhsTyper.reenterValueParams(vparamss)
+          /* @TODO: disabled for now - creates ambiguity bugs.
+           *
+           *   class A { def map(f: Int) = 0 }
+           *   def f: Int = 0
+           *   def g: Int = f
+           * 
+           * fails with ambiguity on `f`.
+           * 
+           * Adriaan agrees that it's wrong to do this.
+           */
+          // rhsTyper.reenterTypeParams(tparams)
+          // rhsTyper.reenterValueParams(vparamss)
           
           val annots = if (sym.isConstructor) {
             assert (!sym.isPrimaryConstructor, sym) // these are handled above
@@ -251,7 +261,7 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
           if (inferE)
             checker.inferEffect += sym
           else if (hasNoE)
-            updateEffect(sym, nonAnnotatedEffect)
+            updateEffect(sym, nonAnnotatedEffect(Some(sym)))
           else if (sym.isConstructor)
             // for (non-primary, these are handled above in a separate pattern) constructors,
             // copy the effect annotations from the constructor symbol to the return type.
@@ -369,14 +379,15 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
         if (inferE)
           checker.inferEffect += primaryConstr
         else
-          updateEffect(primaryConstr, fromAnnotation(sym.annotations).getOrElse(nonAnnotatedEffect))
+          updateEffect(primaryConstr, fromAnnotation(sym.annotations).getOrElse(nonAnnotatedEffect(Some(sym))))
             
         val primaryConstrDef = impl.body.collect({
           case dd @ DefDef(_, _, _, _, _, rhs) if dd.symbol == primaryConstr => dd
         }).head
-          
-        constrTyper.reenterTypeParams(primaryConstrDef.tparams)
-        constrTyper.reenterValueParams(primaryConstrDef.vparamss)
+
+        // @TODO: disabled for now, see comment on `reenter...` above.
+        // constrTyper.reenterTypeParams(primaryConstrDef.tparams)
+        // constrTyper.reenterValueParams(primaryConstrDef.vparamss)
 
         val tp = primaryConstr.tpe // don't move this valdef before the `updateEffect` above!
         if (inferE)

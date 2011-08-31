@@ -28,7 +28,22 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
 
   
   import pcLattice.{PC, PCInfo, AnyPC}
-  
+
+  override def nonAnnotatedEffect(method: Option[Symbol]): Elem = {
+    def isNestedInMethod(sym: Symbol): Boolean = {
+      if (sym == NoSymbol) false
+      else {
+        val o = sym.owner
+        o.isMethod || isNestedInMethod(o)
+      }
+    }
+    method match {
+      case Some(m) if !isNestedInMethod(m) =>
+        lattice.top.copy(_2 = AssignLoc())
+      case _ =>
+        lattice.top
+    }
+  }
   
   override def newEffectTraverser(rhs: Tree, rhsTyper: Typer, sym: Symbol, unit: CompilationUnit): EffectTraverser =
     new StateTraverser(rhs, EnvMap(), rhsTyper, sym, unit)

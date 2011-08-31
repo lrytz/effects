@@ -120,7 +120,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   /**
    * The effect which is used whenever there's no effect annotation.
    */
-  def nonAnnotatedEffect: Elem = lattice.top
+  def nonAnnotatedEffect(method: Option[Symbol] = None): Elem = lattice.top
   
   /**
    * @implement
@@ -400,7 +400,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
         val symTp = classType.memberType(sym).finalResultType
         val osTp = classType.memberType(os).finalResultType
         // @TODO: lattice.top (nonAnnotatedEffect) when overridden does not have an effect annotation? more conservative would be lattice.bottom.
-        val overriddenEffect = fromAnnotation(osTp).orElse(lookupExternal(os)).getOrElse(nonAnnotatedEffect)
+        val overriddenEffect = fromAnnotation(osTp).orElse(lookupExternal(os)).getOrElse(nonAnnotatedEffect(Some(os)))
         if (!lattice.lte(symEff, overriddenEffect))
           overrideError(dd, os, overriddenEffect, symEff)
         checkRefinement(dd, symTp, osTp)
@@ -946,7 +946,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     if (visited contains fun) (lattice.bottom, visited)
     else {
       val annotated = fromAnnotation(fun.tpe).orElse(lookupExternal(fun))
-      var res = annotated.getOrElse(nonAnnotatedEffect)
+      var res = annotated.getOrElse(nonAnnotatedEffect(Some(fun)))
       var seen = visited
 
       trees map { case (funTree, targs, argss) =>
@@ -1128,8 +1128,8 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     override val inferenceOnly = true
 
     def annotationsConform(tpe1: Type, tpe2: Type) = {
-      val eff1 = fromAnnotation(tpe1.annotations).getOrElse(nonAnnotatedEffect)
-      val eff2 = fromAnnotation(tpe2.annotations).getOrElse(nonAnnotatedEffect)
+      val eff1 = fromAnnotation(tpe1.annotations).getOrElse(nonAnnotatedEffect())
+      val eff2 = fromAnnotation(tpe2.annotations).getOrElse(nonAnnotatedEffect())
       lattice.lte(eff1, eff2)
     }
     
@@ -1163,8 +1163,9 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     override def packedTypeAdaptAnnotations(tree: Tree, owner: Symbol): Tree = {
       val old = tree.tpe
       tree.tpe = removeEffectAnnotations(tree.tpe)
-      if (old != tree.tpe)
-        println("removed effect annotation from tree: "+ tree)
+      // @DEBUG
+      // if (old != tree.tpe)
+        // println("removed effect annotation from tree: "+ tree)
       tree
     }
   }

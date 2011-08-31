@@ -47,7 +47,7 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
       Nil // we don't need an annotation if there are no pc calls.
   }
   
-  override def nonAnnotatedEffect: Elem = lattice.bottom
+  override def nonAnnotatedEffect(method: Option[Symbol]): Elem = lattice.bottom
   
   override def checkDefDef(dd: DefDef, ddTyper: Typer, unit: CompilationUnit): DefDef = dd
   override def checkValDef(vd: ValDef, vdTyper: Typer, unit: CompilationUnit): ValDef = vd
