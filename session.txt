@@ -1,3 +1,27 @@
+
+import annotation.effects._
+import annotation.effects.pc._
+import annotation.effects.state._
+
+@pure abstract class C {
+  def foo(): Unit @mod(this)
+  def bar(): Unit @pc(this.foo()) @pure = foo()
+}
+
+def t(c: C): Unit @infer = c.bar()
+
+def t: Unit @infer = (new C { def foo(): Unit @mod() = () }).bar()
+def t: Unit @infer = (new C { def foo(): Unit @mod(this) = () }).bar()
+def t: Unit @infer = (new C { def foo(): Unit @mod(any) = () }).bar()
+
+
+
+===========================================================================
+
+
+
+
+
 import annotation.effects._
 import annotation.effects.pc._
 import annotation.effects.state._

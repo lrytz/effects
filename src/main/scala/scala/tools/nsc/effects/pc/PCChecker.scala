@@ -17,7 +17,7 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
   import pcCommons._ */
 
   val lattice: pcLattice.type = pcLattice
-  import lattice.{PC, PCInfo, AnyPC, sameParam, Elem}
+  import lattice.{PC, AnyPC, PCInfo, ThisLoc, ParamLoc, sameParam, Elem}
   
   val annotationClasses = List(pcClass, anyPcClass)
 
@@ -30,14 +30,20 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
     case AnyPC =>
       List(AnnotationInfo(anyPcClass.tpe, Nil, Nil))
     case PC(xs) if !xs.isEmpty =>
-      val args = xs map(c => c.fun match {
-        case None =>
-          Ident(c.param)
-        case Some(f) =>
-          f.paramss.foldLeft[Tree](Select(Ident(c.param), f))(
-            // (fun, params) => Apply(fun, params map (p => Typed(Ident(percent), TypeTree(p.tpe))))
-            (fun, params) => Apply(fun, params map (_ => Ident(percent)))
-          )
+      val args = xs map(c => {
+        val par = c.param match {
+          case ThisLoc(c) => This(c)
+          case ParamLoc(p) => Ident(p)
+        }
+        c.fun match {
+          case None =>
+            par
+          case Some(f) =>
+            f.paramss.foldLeft[Tree](Select(par, f))(
+              // (fun, params) => Apply(fun, params map (p => Typed(Ident(percent), TypeTree(p.tpe))))
+              (fun, params) => Apply(fun, params map (_ => Ident(percent)))
+            )
+        }
       })
       // every tree needs a type for pickling. types should be correct, else later
       // phases might crash (refchecks). so let's run a typer.
@@ -48,13 +54,13 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
   }
   
   override def nonAnnotatedEffect(method: Option[Symbol]): Elem = lattice.bottom
-  
+
   override def checkDefDef(dd: DefDef, ddTyper: Typer, unit: CompilationUnit): DefDef = dd
   override def checkValDef(vd: ValDef, vdTyper: Typer, unit: CompilationUnit): ValDef = vd
   
   override def computeApplicationEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context) = {
     var res: Elem = lattice.bottom
-    val currentMethod = ctx.owner.enclMethod
+    val funSym = fun.symbol
 
     /** 1. For nested functions, the ParamCalls of the callee might be
      *     also ParamCalls of the caller. Example: both f and g have `x.m()`
@@ -76,7 +82,7 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
      * called function, and if it's AnyPC, or there's no annotation, it will include
      * the effect of calling every method on every argument.
      */
-    fromAnnotation(fun.symbol.tpe).getOrElse(lattice.bottom) match {
+    fromAnnotation(funSym.tpe).getOrElse(lattice.bottom) match {
       case AnyPC => ()
       case PC(calls) =>
         for (pcInfo @ PCInfo(param, pcfun) <- calls) {
@@ -84,36 +90,51 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
             // 1. the annotated param call is still a param call in the current method
             res = lattice.join(res, PC(PCInfo(param, pcfun)))
           } else {
-            var j = -1
-            val i = fun.symbol.paramss.indexWhere(l => {
-              j = l.indexWhere(sameParam(_, param))
-              j >= 0
-            })
-            if (i >= 0) {
-              assert(argss.isDefinedAt(i) && argss(i).isDefinedAt(j), "strange arguments when calling "+ pcfun + " on "+ param +": "+ argss)
-              argss(i)(j) match {
-                case id @ Ident(_) if isParamCall(PCInfo(id.symbol, pcfun), ctx) =>
-                  res = lattice.join(res, PC(PCInfo(id.symbol, pcfun)))
-                case th @ This(_) if isParamCall(PCInfo(th.symbol, pcfun), ctx) =>
-                  res = lattice.join(res, PC(PCInfo(th.symbol, pcfun)))
-                case _ => ()
-              }
+            
+            val paramTree = param match {
+              case ThisLoc(c) =>
+                val Select(qual, _) = fun
+                qual
+                
+              case ParamLoc(p) =>
+                var j = -1
+                val i = funSym.paramss.indexWhere(l => {
+                  j = l.indexWhere(sameParam(_, p))
+                  j >= 0
+                })
+                if (i >= 0) {
+                  assert(argss.isDefinedAt(i) && argss(i).isDefinedAt(j), "strange arguments when calling "+ pcfun + " on "+ param +": "+ argss)
+                  argss(i)(j)
+                }
+            }
+            paramTree match {
+              case id @ Ident(_) =>
+                val pcInfo = PCInfo(ParamLoc(id.symbol), pcfun)
+                if (isParamCall(pcInfo, ctx))
+                  res = lattice.join(res, PC(pcInfo))
+              case th @ This(_) =>
+                val pcInfo = PCInfo(ThisLoc(th.symbol), pcfun)
+                if (isParamCall(pcInfo, ctx))
+                  res = lattice.join(res, PC(pcInfo))
+              case _ => ()
             }
           }
         }
     }
 
     /**
-     * 3. Check if it is a ParamCall (the receiver is a parameter)
+     * 3. Check if it is a ParamCall
      */
     fun match {
       case Select(id @ Ident(_), _) =>
-        if (isParamCall(PCInfo(id.symbol, Some(currentMethod)), ctx))
-          res = lattice.join(res, PC(PCInfo(id.symbol, Some(fun.symbol))))
+        val pcInfo = PCInfo(ParamLoc(id.symbol), Some(funSym))
+        if (isParamCall(pcInfo, ctx))
+          res = lattice.join(res, PC(pcInfo))
 
       case Select(th @ This(_), _) =>
-        if (isParamCall(PCInfo(th.symbol, Some(currentMethod)), ctx))
-          res = lattice.join(res, PC(PCInfo(th.symbol, Some(fun.symbol))))
+        val pcInfo = PCInfo(ThisLoc(th.symbol), Some(funSym))
+        if (isParamCall(pcInfo, ctx))
+          res = lattice.join(res, PC(pcInfo))
       case _ =>
         ()
     }

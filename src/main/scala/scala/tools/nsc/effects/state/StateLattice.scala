@@ -266,7 +266,7 @@ abstract class StateLattice extends CompleteLattice {
   /**
    * Locations, places that are subject to modification effects.
    */
-  trait Location {
+  sealed trait Location {
     def isLocalVar = this match {
       case SymLoc(sym) => sym.isLocal && sym.isVariable
       case ThisLoc(_) => false

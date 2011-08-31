@@ -560,7 +560,12 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
      * parameter location ("b") won't be found in the current environemnt and
      * will be mapped to AnyLoc.
      */
-    val paramLoc = SymLoc(pc.param)
+    val paramLoc = pc.param match {
+      case pcLattice.ThisLoc(c) =>
+        ThisLoc(c)
+      case pcLattice.ParamLoc(p) =>
+        SymLoc(p)
+    }
     // @TODO: fix when enabling PC calls on `this`
 
     val pcEnv = pc.fun match {

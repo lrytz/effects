@@ -9,7 +9,7 @@ trait PCTools[L <: CompleteLattice] { this: EffectChecker[L] =>
     val global: PCTools.this.global.type = PCTools.this.global
   }
 
-  import pcLattice.{PC, PCInfo, AnyPC, PCElem, sameParam}
+  import pcLattice.{PC, AnyPC, PCInfo, PCLoc, ParamLoc, ThisLoc, PCElem, sameParam}
 
   lazy val pcPhase = currentRun.phaseNamed("pcChecker")
   
@@ -17,19 +17,19 @@ trait PCTools[L <: CompleteLattice] { this: EffectChecker[L] =>
    * Convert a @pc annotation to a PCElem
    */
   private def fromPcAnnot(ann: AnnotationInfo): PCElem = {
-    def paramFun(tree: Tree): (Symbol, Option[Symbol]) = tree match {
+    def paramFun(tree: Tree): (PCLoc, Option[Symbol]) = tree match {
       case TypeApply(fun, targs) =>
         paramFun(fun)
       case Apply(fun, args) =>
         paramFun(fun)
       case f @ Select(p @ Ident(_), _) =>
-        (p.symbol, Some(f.symbol))
+        (ParamLoc(p.symbol), Some(f.symbol))
       case f @ Select(t @ This(_), _) =>
-        (t.symbol, Some(f.symbol))
+        (ThisLoc(t.symbol), Some(f.symbol))
       case p @ Ident(_) =>
-        (p.symbol, None)
+        (ParamLoc(p.symbol), None)
       case t @ This(_) =>
-        (t.symbol, None)
+        (ThisLoc(t.symbol), None)
       case _ =>
         abort("unexpected tree in pc annotation: "+ tree)
     }
@@ -99,11 +99,11 @@ trait PCTools[L <: CompleteLattice] { this: EffectChecker[L] =>
    */
   def isParamCall(fun: Tree, ctx: Context): Boolean = fun match {
     case Select(id @ Ident(_), _) =>
-      val paramCall = PCInfo(id.symbol, Some(fun.symbol))
+      val paramCall = PCInfo(ParamLoc(id.symbol), Some(fun.symbol))
       isParamCall(paramCall, ctx)
       
     case Select(th @ This(_), _) =>
-      val paramCall = PCInfo(th.symbol, Some(fun.symbol))
+      val paramCall = PCInfo(ThisLoc(th.symbol), Some(fun.symbol))
       isParamCall(paramCall, ctx)
 
     case _ => false

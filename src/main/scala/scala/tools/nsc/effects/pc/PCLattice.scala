@@ -63,13 +63,22 @@ abstract class PCLattice extends CompleteLattice {
     sameParam(a.param, b.param) && (a.fun == b.fun || b.fun.isEmpty)
   }
 
+  sealed trait PCLoc {
+    def sym = this match {
+      case ThisLoc(c) => c
+      case ParamLoc(p) => p
+    }
+  }
+  case class ThisLoc(cls: Symbol) extends PCLoc
+  case class ParamLoc(param: Symbol) extends PCLoc
+  
   /**
    * Represents one parameter call annotation. If `fun` is None, the
    * parameter call covers all methods on `param`, i.e. an annotation
    * of the form
    *   def f(a: A): R @pc(a)
    */
-  sealed case class PCInfo(param: Symbol, fun: Option[Symbol])
+  sealed case class PCInfo(param: PCLoc, fun: Option[Symbol])
 
   sealed trait PCElem
   case class PC(pcs: List[PCInfo]) extends PCElem {
@@ -80,6 +89,12 @@ abstract class PCLattice extends CompleteLattice {
   }
   case object AnyPC extends PCElem
 
+  def sameParam(a: PCLoc, b: PCLoc): Boolean = (a, b) match {
+    case (ThisLoc(aCls), ThisLoc(bCls)) => aCls == bCls
+    case (ParamLoc(ap), ParamLoc(bp)) => sameParam(ap, bp)
+    case _ => false
+  }
+  
   /**
    * True if `a` and `b` denote the same parameter.
    * 
@@ -88,6 +103,7 @@ abstract class PCLattice extends CompleteLattice {
    * than the one assigned to trees. (When cloning a MethodType, new parameter symbols
    * get created). Therefore, we commpare owner (the method) and name.
    */
-  def sameParam(a: Symbol, b: Symbol) = a.owner == b.owner && a.name == b.name
+  def sameParam(a: Symbol, b: Symbol): Boolean =
+    a.owner == b.owner && a.name == b.name
 }
 

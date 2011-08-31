@@ -86,7 +86,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   val lattice: L
   import lattice.Elem
   
-  import pcLattice.{PCElem, AnyPC, PC, PCInfo, sameParam}
+  import pcLattice.{PCElem, AnyPC, PC, PCInfo, ThisLoc, ParamLoc, sameParam}
 
   /**
    * @implement
@@ -974,8 +974,9 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
              */
             if (!isParamCall(info, ctx)) {
 
-              var forwardedParam = false
-              var arg: Option[Tree] = None // @TODO: fix for param calls on `this`, then we don't have an `arg`...
+              var forwarded = false
+              var pcQual: Option[Tree] = None
+
               if (trees.isDefined) {
                 /* Check if the argument expression is an `Ident` to another parameter, and
                  * there's a @pc  annotation for that. Then we don't have to expand the pc
@@ -986,26 +987,31 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
                  * 
                  * In the call m(a1), m's @pc effect is not expanded.
                  */
-                val Some((_, _, argss)) = trees
-                val flatArgss = argss.flatten
-                val flatParamss = fun.paramss.flatten
-                val i = flatParamss.indexWhere(sameParam(_, param))
-                assert(i >= 0)
-                arg = Some(flatArgss(i))
-                arg.get match {
-                  case id @ Ident(_) if isParamCall(PCInfo(id.symbol, pcfun), ctx) =>
-                    forwardedParam = true
-                  case th @ This(_) if isParamCall(PCInfo(th.symbol, pcfun), ctx) =>
-                    forwardedParam = true
+                val Some((Select(qual, _), _, argss)) = trees
+                pcQual = param match {
+                  case ThisLoc(_) =>
+                    Some(qual)
+                  case ParamLoc(p) =>
+                    val flatArgss = argss.flatten
+                    val flatParamss = fun.paramss.flatten
+                    val i = flatParamss.indexWhere(sameParam(_, p))
+                    assert(i >= 0)
+                    Some(flatArgss(i))
+                }
+                pcQual.get match {
+                  case id @ Ident(_) if isParamCall(PCInfo(ParamLoc(id.symbol), pcfun), ctx) =>
+                    forwarded = true
+                  case th @ This(_) if isParamCall(PCInfo(ThisLoc(th.symbol), pcfun), ctx) =>
+                    forwarded = true
                   case _ =>
                     ()
                 }
               }
               
-              if (!forwardedParam) {
+              if (!forwarded) {
                 pcfun match {
                   case None =>
-                    val (e, v) = anyParamCall(param, ctx, seen)
+                    val (e, v) = anyParamCall(param.sym, ctx, seen)
                     seen = v
                     res = lattice.join(res, e)
 
@@ -1026,8 +1032,8 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
                      * symbol, we might actually find `pcfun` itself!
                      */
                     
-                    val funSym = arg match {
-                      case Some(a) => a.tpe.member(f.name).suchThat(m => m.overriddenSymbol(f.owner) == f || m == f)
+                    val funSym = pcQual match {
+                      case Some(q) => q.tpe.member(f.name).suchThat(m => m.overriddenSymbol(f.owner) == f || m == f)
                       case _ => f
                     }
                     val (e, _) = computeLatentEffect(funSym, ctx, seen, pcInfo = Some(info))
@@ -1039,11 +1045,16 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
           }
         
         case Some(AnyPC) if (!hasAnyPCAnnotation(ctx)) =>
+          // all param calls on the function's parameters
           for (p <- fun.tpe.paramss.flatten) {
             val (e, v) = anyParamCall(p, ctx, seen)
             seen = v
             res = lattice.join(res, e)
           }
+          // all param calls on `this`, i.e. the functions's owner
+          val (e, v) = anyParamCall(fun.owner, ctx, seen)
+          seen = v
+          res = lattice.join(res, e)
       }
       (res, seen)
     }
@@ -1064,7 +1075,8 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     var res = lattice.bottom
     var seen = visited
     for (m <- methods) {
-      val (e, v) = computeLatentEffect(m, ctx, seen, pcInfo = Some(PCInfo(param, Some(m))))
+      val pcLoc = if (param.isParameter) ParamLoc(param) else ThisLoc(param)
+      val (e, v) = computeLatentEffect(m, ctx, seen, pcInfo = Some(PCInfo(pcLoc, Some(m))))
       seen = v
       res = lattice.join(res, e)
     }
