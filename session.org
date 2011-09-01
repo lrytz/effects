@@ -1,3 +1,63 @@
+* Session
+
+import annotation.effects._
+import annotation.effects.pc._
+import annotation.effects.state._
+
+abstract class A { def f(): Unit @pure }
+
+
+* Bugs, Todos
+
+** State effects and refined types
+
+THINK ABOUT THE ISSUE in general.
+ - store, assign and loc annotations can refer to things out of scope
+ - for Function trees, the effects will refer to the arguments of the tree ("x"), but these
+   should be re-mapped to the arguments of the apply method in the refinement ("x$1")
+
+
+import annotation.effects._
+import annotation.effects.pc._
+import annotation.effects.state._
+
+abstract class A { def f(): Unit @pure }
+
+
+
+// CRASH: refined effect is @loc(x) ==> packedType creates an ExistentialType to abstract over x
+
+def foo(a: A): (Int => Int) @refine @pure @pc(a.f()) = {
+  (x: Int) => { a.f(); x }
+}
+
+
+// OK, this is what we actually wanted to test; the checker automatically infers a refined type for `f` WITH @pc(a.f()) !!
+// this can be verified by printing at pickler phase.
+
+def foo(a: A): (Int => Int) @refine @pure @pc(a.f()) = {
+  val f = (x: Int) => { a.f(); 1 }
+  f
+}
+
+
+def bar(x: Int): Int @infer = x + 1
+def bar(a: A, x: Int): Int @infer = foo(a).apply(x)
+
+
+** @infer and overriding
+
+@infer in subclass should not infer more precise than the overridden.
+
+class C { def f: Int @noEff = 1 }
+class D extends C { override def f: Int @infer = 2 }
+
+ => infers @eff, but doesn't issue an error
+
+
+* Tests to integrate
+
+** PC on this
 
 import annotation.effects._
 import annotation.effects.pc._
@@ -16,32 +76,7 @@ def t: Unit @infer = (new C { def foo(): Unit @mod(any) = () }).bar()
 
 
 
-===========================================================================
-
-
-
-
-
-import annotation.effects._
-import annotation.effects.pc._
-import annotation.effects.state._
-
-def f(x: Int): Int @infer = x + 2
-
-class A
-new A { def f: Int @infer = 1 }
-
-
-
-@loc() @pc class A(x: Int)
-def mkA(a: A): A @infer = new A(1)
-
-
-
-
-=====================================
-
-
+** Polymorphic list, Counter, class containing a counter, factories
 
 import annotation.effects._
 import annotation.effects.pc._
@@ -129,13 +164,7 @@ def set3(a: A): Unit @infer = { val b = a; b.setK(kFaktory()) }
 def badFaktory(): Counter @infer = { val c = new Counter; globalCounter.inc(); c }
 
 
-=================================================================================
-
-
-
-
-
-
+** simple state effects example
 
 
 import annotation.effects._
@@ -161,26 +190,7 @@ def t2: Int @infer = f2(c1)
 
 
 
-
-
-
-============================================================================================
-============================================================================================
-
-
-
-============================================================================================
-============================================================================================
-============================================================================================
-
-
-
-
-
-import annotation.effects._; import simple._; import xio._; import exceptions._; import pc._
-
-
-
+** overriding with more specific effect
 
 class A { def f(): Int @eff = 0 }
 
@@ -194,13 +204,7 @@ val a1: A @refine = new A { override def f(): Int @infer = 1 }
 val f: (Int => Int) @refine = (x: Int) => 1
 
 
-
-
-
 def m(a: A): Int @infer = a.f()
-
-
-
 
 def m(a: A): Int @infer = {
   def n: Int @infer = a.f()
@@ -215,12 +219,6 @@ def t: Int @infer = m(a)
 def t: Int @infer = m(a1)
 
 
-
-
-
-
-
-
 def m(a: A): Int @infer = {
   def n: Int @infer = a.f()
   def o: Int @infer = {
@@ -228,12 +226,6 @@ def m(a: A): Int @infer = {
   }
   o
 }
-
-
-
-
-
-
 
 
 // OK
@@ -246,69 +238,8 @@ def m(a: A): Int @pc() @infer = {
 
 
 
-ECLIPSE
-=======
 
-
-
-NOTES
-=====
-
-Provide possibility to specify the concrete effect, even if ParamCalls are enabled (?). Example
-
-  def foo(x: A): B @pc() @effect-of-f = x.f()
-
-
-
-
-
-BUGS
-====
-
---------- scoping bug ----------
-
-import annotation.effects._; import simple._; import xio._; import exceptions._; import pc._
-class A { def f(): Int @eff = 0 }
-val a = new A
-def m(a: A): Int @infer = a.f()
-def test: Int @infer = m(a)
-
-====
-
-Case classes, polymorphic classes. things break..
-
-
-abstract class L[A] {
-  def h: A @pure
-  def t: L[A] @pure
-}
-val he = new Error("h of N")
-val te = new Error("t of N")
-case object N extends L[Nothing] {
-  def h: Nothing @pure = throw he
-  def t: Nothing @pure = throw te
-}
-case class C[A](h: A, t: L[A]) extends L[A]
-
-
-====
-
-@infer in subclass should not infer more precise than the overridden.
-
-class C { def f: Int @noEff = 1 }
-class D extends C { override def f: Int @infer = 2 }
-
- => infers @eff, but doesn't issue an error
-
-====
-
-
-
-
-TESTS
-=====
-
------------ interplay: eff and xio --------------
+** interplay: eff and xio
 
 
 def f: Int @infer = {eff(); 1}
@@ -333,7 +264,7 @@ def f: Int @noEff @noXio = x
 
 
 
---------------- exceptions --------------------
+** exceptions
 
 
 class E1 extends Exception
@@ -368,7 +299,7 @@ def bar(): Int @infer = try {
 
 
 
----------- manual pc annotations ----------
+** pc annotations
 
 def f(x: Int): Int @pc(x.+(2)) = x + 1
 
@@ -376,7 +307,7 @@ def f(x: Int): Int @pc(x.+(% : Int)) = x + 1
 
 
 
----------- polymorphic function ---------------
+** pc polymorphism (need more annotations now with simplified pc)
 
 
 class A { def f(): Int @eff = 1 }
@@ -391,55 +322,7 @@ def g(): Int @infer = f(someA)
 def g(): Int @infer = f(someA1)
 
 
-
-
-
-
-
------- polymorphic map ----------
-
-abstract class L {
-  def h: Int @noEff
-  def t: L @noEff
-  def isEmpty: Boolean @noEff
-}
-
-val he = new Error("h of N")
-val te = new Error("t of N")
-
-object N extends L {
-  def h: Nothing @noEff = throw he
-  def t: Nothing @noEff = throw te
-  def isEmpty: Boolean @noEff = true
-}
-
-class C(val h: Int, val t: L) extends L {
-  def isEmpty: Boolean @noEff = false
-}
-
-
-// can't use @infer because it's recursive - IllegalCyclicReference
-
-def map(l: L, f: Int => Int): L @pc(f.apply(%), l.isEmpty, l.t) @noEff = {
-  if (l.isEmpty) l
-  else map(l.t, f)
-}
-
-val lst = new C(1, new C(2, N))
-
-
-val f1: (Int => Int) @refine = (x: Int) => 1
-def test: L @infer = map(lst, f1)
-
-val f2: (Int => Int) @refine = (x: Int) => { eff(); 1 }
-def test: L @infer = map(lst, f2)
-
-def test: L @infer = map(lst, (x: Int) => { eff(); 1 })   // eff
-def test: L @infer = map(lst, (x: Int) => 1)              // noEff
-
-
-
----------- param forwarding ---------------
+** pc forwarding (needs more annotations now with simplified pc)
 
 class A { def f(): Int @eff = 1 }
 class B extends A { override def f(): Int @noEff = 2 }
@@ -461,7 +344,7 @@ def o(i: A): Int @infer = { val k = i; m(k) }
 
 
 
------------- local values -------------
+** local values
 
 def f(): Int @infer = {
   val a: (() => Int) @refine = () => 1
