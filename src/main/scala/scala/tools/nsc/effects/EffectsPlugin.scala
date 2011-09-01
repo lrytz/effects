@@ -28,15 +28,16 @@ class EffectsPlugin(val global: Global) extends Plugin {
     }
     super.processOptions(rest.toList, error)
   }
-
   val pcChecker = new pc.PCChecker(global)
   val pcInferencer = new {
+    // early def: the EffectInferencer constructor accesses "checker.global"
     val checker = pcChecker
-  } with EffectInferencer[pc.PCLattice] {
+  } with pc.PCInferencer {
     val runsAfter = List("superaccessors")
     val phaseName = "pcInferencer"
   }
 
+/*
   val simpleChecker = new simple.SimpleChecker(global)
   val simpleInferencer = new {
     val checker = simpleChecker
@@ -60,36 +61,20 @@ class EffectsPlugin(val global: Global) extends Plugin {
     val runsAfter = List("simpleChecker")
     val phaseName = "exceptionsInferencer"
   }
- 
-  /*
-  val paramCallsChecker = new ParamCallsChecker(global)
-  val paramCallsInferencer = new {
-    val checker = paramCallsChecker
-  } with EffectInferencer[ParamCalls] {
-    val runsAfter = List("superaccessors")
-//    override val runsBefore = List("pickler") // should not be needed, the checker runs before pickler already
-    val phaseName = "paramcallsinferencer"
-  }
-*/
+ */
 
-/*
-  val exceptionsChecker = new ExceptionsChecker(global)
-  val exceptionsInferencer = new {
-    // early def: the EffectInferencer constructor accesses "checker.global"
-    val checker = exceptionsChecker
-  } with EffectInferencer[Exceptions] {
-    val runsAfter = List("paramcallschecker")
-//    override val runsBefore = List("pickler")
-    val phaseName = "exceptionsinferencer"
+  val stateChecker = new state.StateChecker(global)
+  val stateInferencer = new {
+    val checker = stateChecker
+  } with state.StateInferencer {
+    val runsAfter = List("pcChecker")
+    val phaseName = "stateInferencer"
   }
-*/
 
   /**
    * The compiler components that will be applied when running this plugin
    */
-  val components = List(pcInferencer, pcChecker, simpleInferencer, simpleChecker /*, exceptionsInferencer, exceptionsChecker */ /* , xioInferencer, xioChecker */)
-  // List(paramCallsInferencer, paramCallsChecker, exceptionsInferencer, exceptionsChecker)
-
+  val components = List(pcInferencer, pcChecker, stateChecker, stateInferencer /*, simpleInferencer, simpleChecker, exceptionsInferencer, exceptionsChecker */ /* , xioInferencer, xioChecker */)
 }
 
 object EffectsPlugin {

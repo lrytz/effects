@@ -1,3 +1,4 @@
+/*
 package scala.tools.nsc.effects
 package pc
 
@@ -12,22 +13,36 @@ abstract class PCCommons {
   }
 
   import global._
-  import pcLattice.{PC, PCInfo, AnyPC, Elem}
+  import global.analyzer.Context
+  import pcLattice.{PC, PCInfo, AnyPC, Elem, sameParam}
 
+  
+  /**
+   * @TODO: what about params of Function trees?!?
+   */
   def isParam(param: Symbol, currentMethod: Symbol): Boolean = {
     if (currentMethod == NoSymbol) false
     else if (!currentMethod.isMethod) isParam(param, currentMethod.owner)
     else {
       // without atPhase there can be CyclicReferences
       val paramss = atPhase(currentRun.typerPhase)(currentMethod.paramss)
-      paramss.exists(_.exists(_ == param)) || isParam(param, currentMethod.owner)
+      // "sameParam" compares name and owner (why: see its doc).
+      paramss.exists(_.exists(sameParam(_, param))) || isParam(param, currentMethod.owner)
       
     }
   }
-
+  
   lazy val pcClass = definitions.getClass("scala.annotation.effects.pc.pc")
   lazy val anyPcClass = definitions.getClass("scala.annotation.effects.pc.anyPc")
 
+  def isAnnotatedPc(fun: Tree, ctx: Context) = fun match {
+    case Select(id @ Ident(_), _) =>
+      val currentMethod = ctx.owner.enclMethod
+      (isParam(id.symbol, currentMethod)) && false
+      
+    case _ => false
+  }
+  
   private def pcFromAnnot(ann: AnnotationInfo): Elem = {
     var par: Symbol = NoSymbol
     var fun: Symbol = NoSymbol
@@ -64,3 +79,4 @@ abstract class PCCommons {
   }
 
 }
+*/

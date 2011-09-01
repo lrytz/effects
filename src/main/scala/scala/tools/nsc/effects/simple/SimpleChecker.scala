@@ -4,7 +4,7 @@ package simple
 import pc._
 import scala.tools.nsc._
 
-class SimpleChecker(val global: Global) extends EffectChecker[SimpleLattice] with PCTracking[SimpleLattice] {
+class SimpleChecker(val global: Global) extends EffectChecker[SimpleLattice] {
   import global._
 
   val runsAfter = List("simpleInferencer")
@@ -13,6 +13,7 @@ class SimpleChecker(val global: Global) extends EffectChecker[SimpleLattice] wit
 
 
   val lattice = new SimpleLattice
+  import lattice.Elem
 
 
   // encoding as annotations
@@ -34,7 +35,7 @@ class SimpleChecker(val global: Global) extends EffectChecker[SimpleLattice] wit
   }
 
   def toAnnotation(elem: Elem) = elem match {
-    case Eff =>   AnnotationInfo(effClass.tpe, Nil, Nil)
-    case NoEff => AnnotationInfo(noEffClass.tpe, Nil, Nil)
+    case Eff =>   List(AnnotationInfo(effClass.tpe, Nil, Nil))
+    case NoEff => List(AnnotationInfo(noEffClass.tpe, Nil, Nil))
   }
 }
