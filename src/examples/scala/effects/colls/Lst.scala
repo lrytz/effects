@@ -57,7 +57,7 @@ trait TravLk[+A, +Repr] { self: Repr =>
   }
 
   def map[B, That](f: A => B)(implicit bf: CBF[Repr, B, That]): That = {
-    val b = bf(self.asInstanceOf[Repr]) // @TODO: cast due to intellij bug (youtrack.jetbrains.net/issue/SCL-2480)
+    val b = bf(self)
     for (x <- this) b += f(x)
     b.result()
   }

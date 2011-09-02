@@ -31,7 +31,7 @@ abstract class StateLattice extends CompleteLattice {
    * 
    *   if (..) { x = a } else { if (..) x = b }
    *   
-   * the resulting effect is @weakAssign(x, {a, b})
+   * the resulting effect is @assign(x, {a, b})
    */
   def join(a: Elem, b: Elem) =
     (joinStore(a._1, b._1), joinAssignment(a._2, b._2), joinLocality(a._3, b._3))
@@ -43,7 +43,7 @@ abstract class StateLattice extends CompleteLattice {
    *     if (..) x = b
    *   }
    *
-   * The effect is @strongAssign(x, {a, b})
+   * The effect is assignStrong(x, {a, b})
    * 
    * @TODO: sequencing is probably more complicated, it needs the current environment!!!
    * When the first effect assigns a variable, the second modifies it, then the env
@@ -58,7 +58,7 @@ abstract class StateLattice extends CompleteLattice {
    * a fresh value can only be returned by methods that don't have
    * any side-effects.
    * 
-   * @TOOD: compare the implamentation of this method with the notes on paper.
+   * @TOOD: compare the implementation of this method with the notes on paper.
    */
   def updateLocality(eff: Elem, loc: Locality) = {
     if (loc.isFresh) {
@@ -300,6 +300,7 @@ abstract class StateLattice extends CompleteLattice {
         effs.toList match {
           case Nil => true
           case List((in, from)) => in == Fresh && from.isFresh
+          case _ => false
         }
       case _ => false
     }

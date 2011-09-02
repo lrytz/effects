@@ -434,7 +434,7 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
       val (fun, targs, argss) = decomposeApply(tree)
       val funSym = fun.symbol
       
-      if (funSym.toString == "method map") // @DEBUG
+      if (funSym.toString == "method d_=") // @DEBUG
         println()
       
       val funEff = qualEffect(fun, env)

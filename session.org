@@ -1,10 +1,7 @@
 * Session
 
-import annotation.effects._
-import annotation.effects.pc._
-import annotation.effects.state._
 
-abstract class A { def f(): Unit @pure }
+
 
 
 * Bugs, Todos
@@ -56,6 +53,35 @@ class D extends C { override def f: Int @infer = 2 }
 
 
 * Tests to integrate
+
+** state effects depend on order
+
+import annotation.effects._
+import annotation.effects.pc._
+import annotation.effects.state._
+
+@loc class D { }
+
+@loc class C {
+  @local var d: D = new D
+}
+
+def f(c: C, d: D): Unit @mod(c) = {
+  c.d = new D
+}
+
+def f(c: C, d: D): Unit @store(c, d) @mod(c) = { // OK
+  c.d = new D
+  c.d = d
+}
+
+
+def f(c: C, d: D): Unit @store(c, d) @mod(c) = { // effect does not conform
+  c.d = d
+  c.d = new D
+}
+
+
 
 ** PC on this
 
