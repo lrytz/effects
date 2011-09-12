@@ -20,9 +20,9 @@ trait CompleteLattice {
   implicit def toElemOps(eff: Elem) = new ElemOps(eff)
   
   class ElemOps(eff: Elem) {
+    def u(other: Elem): Elem = join(eff, other)
     def <= (other: Elem): Boolean = lte(eff, other)
   }
-  
 
   def join(a: Elem, b: Elem): Elem
   def join(elems: Elem*): Elem = {

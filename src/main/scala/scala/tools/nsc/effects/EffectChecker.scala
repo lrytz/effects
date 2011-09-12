@@ -87,7 +87,10 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   import lattice.{Elem, toElemOps}
   
   import pcLattice.{AnyPC, PC, PCInfo, ThisLoc, ParamLoc, sameParam}
-
+  
+  val effectEnv: EffectEnv[L] = new NoEffectEnv[L]
+  import effectEnv.Env
+  
   /**
    * @implement
    * 
