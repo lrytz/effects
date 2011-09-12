@@ -84,9 +84,9 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    */
 
   val lattice: L
-  import lattice.Elem
+  import lattice.{Elem, toElemOps}
   
-  import pcLattice.{PCElem, AnyPC, PC, PCInfo, ThisLoc, ParamLoc, sameParam}
+  import pcLattice.{AnyPC, PC, PCInfo, ThisLoc, ParamLoc, sameParam}
 
   /**
    * @implement
@@ -361,7 +361,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       if (sym.toString() == "method modify")
         println()
       val rhsEff = computeEffect(dd.rhs, ddTyper, sym, unit)
-      if (!lattice.lte(rhsEff, symEff))
+      if (!(rhsEff <= symEff))
         effectError(dd, symEff, rhsEff)
     }
 
@@ -401,7 +401,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
         val osTp = classType.memberType(os).finalResultType
         // @TODO: lattice.top (nonAnnotatedEffect) when overridden does not have an effect annotation? more conservative would be lattice.bottom.
         val overriddenEffect = fromAnnotation(osTp).orElse(lookupExternal(os)).getOrElse(nonAnnotatedEffect(Some(os)))
-        if (!lattice.lte(symEff, overriddenEffect))
+        if (!(symEff <= overriddenEffect))
           overrideError(dd, os, overriddenEffect, symEff)
         checkRefinement(dd, symTp, osTp)
       }
@@ -872,7 +872,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
      * 
      * This methods decomposes the `tree`, which is a function application, into three
      * parts: the function, the type arguments, and the value argumentss. It traverses
-     * all these parts (calling `add` on their effects) and finally adds the latent effect
+     * all these parts (composing their effects) and finally computes the latent effect
      * of the function using `computeApplicationEffect`.
      */
     protected def handleApplication(tree: Tree) {
@@ -1142,7 +1142,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     def annotationsConform(tpe1: Type, tpe2: Type) = {
       val eff1 = fromAnnotation(tpe1.annotations).getOrElse(nonAnnotatedEffect())
       val eff2 = fromAnnotation(tpe2.annotations).getOrElse(nonAnnotatedEffect())
-      lattice.lte(eff1, eff2)
+      eff1 <= eff2
     }
     
     /**

@@ -17,6 +17,13 @@ trait CompleteLattice {
    */
   def pure: Elem = bottom
 
+  implicit def toElemOps(eff: Elem) = new ElemOps(eff)
+  
+  class ElemOps(eff: Elem) {
+    def <= (other: Elem): Boolean = lte(eff, other)
+  }
+  
+
   def join(a: Elem, b: Elem): Elem
   def join(elems: Elem*): Elem = {
     if (elems.isEmpty) bottom
@@ -27,5 +34,8 @@ trait CompleteLattice {
     }
   }
 
+  /**
+   * Compare two effects, return `true` if `a` is smaller or equal to `b`
+   */
   def lte(a: Elem, b: Elem): Boolean
 }

@@ -22,9 +22,9 @@ abstract class StateLattice extends CompleteLattice {
   /**
    * Construct effect elements form effects in one domain.
    */
-  def mkElem(store: Store): Elem = (store, AssignLoc(), LocSet())
-  def mkElem(assign: Assignment): Elem = (StoreLoc(), assign, LocSet())
-  def mkElem(loc: Locality): Elem = (StoreLoc(), AssignLoc(), loc)
+  def mkElem(store: Store): Elem       = (store,      AssignLoc(), LocSet())
+  def mkElem(assign: Assignment): Elem = (StoreLoc(), assign,      LocSet())
+  def mkElem(loc: Locality): Elem      = (StoreLoc(), AssignLoc(), loc)
 
   /**
    * Join effects, e.g. in

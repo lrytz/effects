@@ -363,7 +363,7 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
                   val storeEff = mkElem(StoreLoc(loc, LocSet(Fresh)))
                   sequence(rhsEffect, storeEff)
                 case _ =>
-                  mkElem(StoreAny)
+                  mkElem(StoreAny) // @TODO: why always StoreAny, not a store effect to the location (if it's a SymLoc)???
               } else {
                 val storeEff = mkElem(StoreLoc(ThisLoc(sym.owner), LocSet(Fresh)))
                 sequence(rhsEffect, storeEff)
@@ -456,11 +456,10 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
       }
       
       // build a map from the function's parameter symbols to the localities of the arguments
-      val flatParams = funSym.tpe.paramss.flatten
-
       val paramsMap: Map[Location, Locality] = {
         // For methods in classes (not objects), modifications to `this` mean modifications to the receiver (funLoc)
         val receiverMap = if (funSym.owner.isModuleClass) Map() else Map(ThisLoc(funSym.owner) -> funLoc)
+        val flatParams = funSym.tpe.paramss.flatten
         receiverMap ++ ((flatParams map SymLoc) zip flatArgLocs)
       }
       
