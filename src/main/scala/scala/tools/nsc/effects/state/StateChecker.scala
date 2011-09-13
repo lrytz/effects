@@ -29,6 +29,11 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
   
   import pcLattice.{PC, PCInfo, AnyPC}
 
+  override val effectEnv = new StateEnv {
+    val checker: StateChecker.this.type = StateChecker.this
+  }
+  import effectEnv.{Env, EnvMap, AnyEnv}
+  
   override def nonAnnotatedEffect(method: Option[Symbol]): Elem = {
     def isNestedInMethod(sym: Symbol): Boolean = {
       if (sym == NoSymbol) false
@@ -48,7 +53,7 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
   override def newEffectTraverser(rhs: Tree, rhsTyper: Typer, sym: Symbol, unit: CompilationUnit): EffectTraverser =
     new StateTraverser(rhs, EnvMap(), rhsTyper, sym, unit)
 
-
+/*
   trait Env {
     
     /**
@@ -197,7 +202,8 @@ class StateChecker(val global: Global) extends EffectChecker[StateLattice] with 
    */
   case class EnvMap(m: Map[Location, Locality] = Map(), localsTo: Option[Locality] = None) extends Env
   case object AnyEnv extends Env
-
+*/
+  
   
   override def computeEffect(rhs: Tree, rhsTyper: Typer, sym: Symbol, unit: CompilationUnit) = {
     val ctx = rhsTyper.context1.outer

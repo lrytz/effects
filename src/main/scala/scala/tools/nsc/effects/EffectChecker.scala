@@ -87,10 +87,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   import lattice.{Elem, toElemOps}
   
   import pcLattice.{AnyPC, PC, PCInfo, ThisLoc, ParamLoc, sameParam}
-  
-  val effectEnv: EffectEnv[L] = new NoEffectEnv[L]
-  import effectEnv.Env
-  
+
   /**
    * @implement
    * 
@@ -772,12 +769,12 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
                               primConstrRhs: Tree, primConstrTyper: Typer, primConstrSym: Symbol,
                               unit: CompilationUnit): Elem = {
     val refinedRhs = refine(primConstrRhs, primConstrTyper, primConstrSym, unit)
-    val rhsEff = newEffectTraverser(refinedRhs, primConstrTyper, primConstrSym, unit).compute()
-    
     val refinedImpl = refine(impl, implTyper, classSym, unit)
+    
+    val rhsEff = newEffectTraverser(refinedRhs, primConstrTyper, primConstrSym, unit).compute()
     val implEff = newEffectTraverser(refinedImpl, implTyper, classSym, unit).compute()
 
-    lattice.join(rhsEff, implEff)
+    rhsEff u implEff
   }
 
   /**
@@ -800,17 +797,27 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     }
 
     protected var acc: Elem = lattice.bottom
-    protected def add(eff: Elem) { acc = lattice.join(acc, eff) }
+    protected def add(eff: Elem) { acc = acc u eff }
 
+    /**
+     * Computes the effect of a subtree of `rhs`.
+     */
+    def subtreeEffect(tree: Tree): Elem = {
+      newEffectTraverser(tree, rhsTyper, sym, unit).compute()
+    }
+    
     override def traverse(tree: Tree) {
       tree match {
         case ClassDef(_, _, _, _) => ()
         case ModuleDef(_, _, _) => ()
-        case DefDef(_, _, _, _, _, _) => ()
         case ValDef(_, _, _, _) if tree.symbol.isLazy => ()
+        case DefDef(_, _, _, _, _, _) => ()
         case TypeDef(_, _, _, _) => ()
+        case Import(_, _) => ()
         case Function(_, _) => ()
-
+        
+        /* @TODO: LabelDef and jumps (apply to label) */
+        
         /**
          * @TODO on Select and Ident
          *  - effect of module constructor!!! (happens when module is accessed for the first time)
@@ -1016,7 +1023,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
                   case None =>
                     val (e, v) = anyParamCall(param.sym, ctx, seen)
                     seen = v
-                    res = lattice.join(res, e)
+                    res = res u e
 
                   case Some(f) =>
                     /* Include the effect of a parameter call. The effect might be more specific than
@@ -1041,7 +1048,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
                     }
                     val (e, _) = computeLatentEffect(funSym, ctx, seen, pcInfo = Some(info))
                     seen += funSym
-                    res = lattice.join(res, e)
+                    res = res u e
                 }
               }
             }
@@ -1052,12 +1059,12 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
           for (p <- fun.tpe.paramss.flatten) {
             val (e, v) = anyParamCall(p, ctx, seen)
             seen = v
-            res = lattice.join(res, e)
+            res = res u e
           }
           // all param calls on `this`, i.e. the functions's owner
           val (e, v) = anyParamCall(fun.owner, ctx, seen)
           seen = v
-          res = lattice.join(res, e)
+          res = res u e
       }
       (res, seen)
     }
@@ -1081,7 +1088,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       val pcLoc = if (param.isParameter) ParamLoc(param) else ThisLoc(param)
       val (e, v) = computeLatentEffect(m, ctx, seen, pcInfo = Some(PCInfo(pcLoc, Some(m))))
       seen = v
-      res = lattice.join(res, e)
+      res = res u e
     }
     (res, seen)
   }
