@@ -89,7 +89,7 @@ import annotation.effects._
 import annotation.effects.pc._
 import annotation.effects.state._
 
-@pure abstract class C {
+@loc abstract class C {
   def foo(): Unit @mod(this)
   def bar(): Unit @pc(this.foo()) @pure = foo()
 }

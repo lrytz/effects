@@ -28,13 +28,13 @@ abstract class EnvEffectChecker[L <: CompleteLattice] extends EffectChecker[L] {
   override def computePrimConstrEffect(impl: Template, implTyper: Typer, classSym: Symbol,
                                        primConstrRhs: Tree, primConstrTyper: Typer, primConstrSym: Symbol,
                                        unit: CompilationUnit): Elem = {
-    // @TODO: use environments!
-    
     val refinedRhs = refine(primConstrRhs, primConstrTyper, primConstrSym, unit)
     val refinedImpl = refine(impl, implTyper, classSym, unit)
     
-    val rhsEff = newEffectTraverser(refinedRhs, primConstrTyper, primConstrSym, unit).compute()
-    val implEff = newEffectTraverser(refinedImpl, implTyper, classSym, unit).compute()
+    val env = effectEnv.empty
+    
+    val rhsEff = newEnvEffectTraverser(refinedRhs, env, primConstrTyper, primConstrSym, unit).compute()
+    val implEff = newEnvEffectTraverser(refinedImpl, env.applyEffect(rhsEff), implTyper, classSym, unit).compute()
 
     rhsEff u implEff
   }
@@ -60,16 +60,25 @@ abstract class EnvEffectChecker[L <: CompleteLattice] extends EffectChecker[L] {
     def subtreeEffect(tree: Tree, env: Env): Elem = {
       newEnvEffectTraverser(tree, env, rhsTyper, sym, unit).compute()
     }
-
-    def seq(initEnv: Env, trees: Tree*): (Elem, Env) = {
+    
+    case class Res(eff: Elem, env: Env)
+    implicit def tuple2Res(t: (Elem, Env)) = Res(t._1, t._2)
+    
+    def analyze(env: Env, tree: Tree): Res = {
+      val eff = subtreeEffect(tree, env)
+      (eff, env.applyEffect(eff))
+    }
+    
+    def seq(initEnv: Env, trees: Tree*): Res = {
       ((lattice.bottom, initEnv) /: trees) {
         case ((eff, env), tree) =>
-          val e = subtreeEffect(tree, env)
-          (eff u e, env.applyEffect(e))
+          val res = analyze(env, tree)
+          (eff u res.eff, res.env)
       }
     }
     
-    def or(initEnv: Env, trees: Tree*): (Elem, Env) = {
+    
+    def or(initEnv: Env, trees: Tree*): Res = {
       val e = (lattice.bottom /: trees) {
         case (eff, tree) =>
           val e = subtreeEffect(tree, initEnv)
@@ -78,7 +87,11 @@ abstract class EnvEffectChecker[L <: CompleteLattice] extends EffectChecker[L] {
       (e, initEnv.applyEffect(e))
     }
 
-    def loop(initEnv: Env, tree: Tree): (Elem, Env) = {
+    /* @TODO: probably we don't even need that, because applying (e1 u e2) to an environment
+     * already gives the most conservative resulting environment
+     * 
+     */
+/*    def loop(initEnv: Env, tree: Tree): Res = {
       var resEff = lattice.bottom
       var resEnv = initEnv
       var eff = subtreeEffect(tree, resEnv)
@@ -88,43 +101,96 @@ abstract class EnvEffectChecker[L <: CompleteLattice] extends EffectChecker[L] {
         eff = subtreeEffect(tree, resEnv)
       }
       (resEff, resEnv)
-    }
+    }*/
 
     override def traverse(tree: Tree) {
       tree match {
         case Block(stats, expr) =>
-          val statsEff = seq(stats, env)
-          seq(expr, statsEff)
+          val statsRes = seq(env, stats: _*)
+          val exprRes = analyze(statsRes.env, expr)
+          add(statsRes.eff u exprRes.eff)
           
+        /* @TODO: CaseDef, Alternative, Sar, Bind, UnApply, ArrayValue, */
           
+        case Assign(a, b) =>
+          add(seq(env, a, b).eff)
+        
         case If(cond, thenExpr, elseExpr) =>
-          seq(env, cond, or(thenExpr, elseExpr))
+          val condRes = analyze(env, cond)
+          val thenElseRes = or(condRes.env, thenExpr, elseExpr)
+          add(condRes.eff u thenElseRes.eff)
           
+        /* @TODO: Match */
+        
+        case Try(block, catches, finalizer) =>
+          val blockRes = analyze(env, block)
+          // @TODO: catches. the patterns happen in sequence, but the pattern bodies we can treat as `or`, as only one of them gets executed.
+          val finRes = analyze(blockRes.env, finalizer)
+          add(blockRes.eff u finRes.eff)
 
-          analyze(cond) >>= (res => {
-            
-          })
-          
-          
-          val condEff = subtreeEffect(cond, env)
-          val condEnv = env.applyEffect(condEff)
-          
-          val thenEff = subtreeEffect(thenExpr, condEnv)
-          val elseEff = subtreeEffect(elseExpr, condEnv)
-          
-          val resEff = sequence(condEff, join(thenEff, elseEff))
-          add(resEff)
-          
-/*          val (statsEff, statsEnv) = ((lattice.bottom, env) /: stats) {
-            case ((eff, env), stat) =>
-              val e = subtreeEffect(stat, env)
-              (eff u e, env.applyEffect(e))
-          }
-          
-          val exprEff = subtreeEffect(expr, statsEnv)
-          add(sequence(statsEff, exprEff))
-*/
+        case _ =>
+          super.traverse(tree)
       }
     }
+    
+
+    def qualEffect(tree: Tree, env: Env): Res = tree match {
+      case Select(qual, _) => analyze(env, qual)
+      case Ident(_) => (lattice.bottom, env)
+    }
+
+    override def handleApplication(tree: Tree) {
+      val (fun, targs, argss) = decomposeApply(tree)
+      val funSym = fun.symbol
+      val ctx = rhsTyper.context1
+
+      def adaptEffs(latent: Elem, pcs: List[(Elem, PCInfo)]) = {
+        var res = adaptLatentEffect(latent, fun, targs, argss, ctx)
+        for ((pcEff, pcInfo) <- pcs)
+          res = res u adaptPcEffect(pcEff, pcInfo, ctx)
+        res
+      }
+      
+      val funRes = qualEffect(fun, env)
+      val targsRes = seq(funRes.env, targs: _*)
+      val argssRes = seq(targsRes.env, argss.flatten: _*)
+
+      val (latentEff, pcEffs) = computeApplicationEffect(fun, targs, argss, rhsTyper.context1)
+      
+
+      val appEff = if (pcEffs.isEmpty) {
+        withEnv(argssRes.env) { adaptLatentEffect(latentEff, fun, targs, argss, ctx) }
+      } else {
+        var prevRes = withEnv(argssRes.env) { adaptEffs(latentEff, pcEffs) }
+        var appEnv = argssRes.env.applyEffect(prevRes)
+        var res = withEnv(appEnv) { adaptEffs(latentEff, pcEffs) }
+        while (!(res <= prevRes)) {
+          prevRes = res
+          appEnv = appEnv.applyEffect(prevRes)
+          res = withEnv(appEnv) { adaptEffs(latentEff, pcEffs) }
+        }
+        res
+      }
+
+      add(funRes.eff u targsRes.eff u argssRes.eff u appEff)
+    }    
+  }
+  
+  /**
+   * This vairable makes the current environment available during
+   * `computeApplicationEffect`. This method calls `adaptLatentEffect`
+   * and `adaptPcEffect`, which can be overridden to adapt the effects
+   * on a function to the current environment.
+   * 
+   * For an example, see the implementation of StateChecker.
+   */
+  private var _currentEnv: Env = _ // effectEnv.empty (does not work, creates initialization deadlock)
+  def currentEnv = _currentEnv
+  def withEnv[T](env: Env)(op: => T): T = {
+    val savedEnv = _currentEnv
+    _currentEnv = env
+    val res = op
+    _currentEnv = savedEnv
+    res
   }
 }

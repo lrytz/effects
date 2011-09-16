@@ -15,13 +15,12 @@ trait ConvertAnnots { this: StateChecker =>
   /* Annotation Classes */
   val modClass = definitions.getClass("scala.annotation.effects.state.mod")
   val storeClass = definitions.getClass("scala.annotation.effects.state.store")
-  val assignStrongClass = definitions.getClass("scala.annotation.effects.state.assignStrong")
   val assignClass = definitions.getClass("scala.annotation.effects.state.assign")
   val locClass = definitions.getClass("scala.annotation.effects.state.loc")
 
   val localClass = definitions.getClass("scala.annotation.effects.state.local")
 
-  val annotationClasses = List(modClass, storeClass, assignStrongClass, assignClass, locClass)
+  val annotationClasses = List(modClass, storeClass, assignClass, locClass)
 
   
   /* Locations */
@@ -54,18 +53,17 @@ trait ConvertAnnots { this: StateChecker =>
     }
     
     // filter and partition `annots` into the lists below
-    val (modAnn, storeAnn, assignSAnn, assignWAnn, locAnn, pureAnn) = {
+    val (modAnn, storeAnn, assignAnn, locAnn, pureAnn) = {
       val n: List[AnnotationInfo] = Nil
-      ((n, n, n, n, n, n) /: annots) {
-        case ((modAnn, storeAnn, assignSAnn, assignWAnn, locAnn, pureAnn), annot) =>
+      ((n, n, n, n, n) /: annots) {
+        case ((modAnn, storeAnn, assignAnn, locAnn, pureAnn), annot) =>
           annot.atp.typeSymbol match {
-            case `modClass`          => (annot :: modAnn, storeAnn, assignSAnn, assignWAnn, locAnn, pureAnn)
-            case `storeClass`        => (modAnn, annot :: storeAnn, assignSAnn, assignWAnn, locAnn, pureAnn)
-            case `assignStrongClass` => (modAnn, storeAnn, annot :: assignSAnn, assignWAnn, locAnn, pureAnn)
-            case `assignClass`       => (modAnn, storeAnn, assignSAnn, annot :: assignWAnn, locAnn, pureAnn)
-            case `locClass`          => (modAnn, storeAnn, assignSAnn, assignWAnn, annot :: locAnn, pureAnn)
-            case `pureAnnotation`    => (modAnn, storeAnn, assignSAnn, assignWAnn, locAnn, annot :: pureAnn)
-            case _                   => (modAnn, storeAnn, assignSAnn, assignWAnn, locAnn, pureAnn)
+            case `modClass`          => (annot :: modAnn, storeAnn, assignAnn, locAnn, pureAnn)
+            case `storeClass`        => (modAnn, annot :: storeAnn, assignAnn, locAnn, pureAnn)
+            case `assignClass`       => (modAnn, storeAnn, annot :: assignAnn, locAnn, pureAnn)
+            case `locClass`          => (modAnn, storeAnn, assignAnn, annot :: locAnn, pureAnn)
+            case `pureAnnotation`    => (modAnn, storeAnn, assignAnn, locAnn, annot :: pureAnn)
+            case _                   => (modAnn, storeAnn, assignAnn, locAnn, pureAnn)
           }
       }
     }
@@ -101,7 +99,7 @@ trait ConvertAnnots { this: StateChecker =>
     
     
     val assign = {
-      def fromAss(ass: List[AnnotationInfo], useStrong: Boolean) = ((AssignLoc(): Assignment) /: ass) {
+      def fromAss(ass: List[AnnotationInfo]) = ((AssignLoc(): Assignment) /: ass) {
         case (assign, ann) =>
           ann.args.flatMap(locationOf) match {
             case to :: from =>
@@ -109,18 +107,17 @@ trait ConvertAnnots { this: StateChecker =>
               to match {
                 case Right(_) => AssignAny(fromLoc)
                 case Left(toLoc) =>
-                  assign.include(toLoc, fromLoc, useStrong)
+                  assign.include(toLoc, fromLoc)
               }
             case _ =>
               assign // again, there were errors reported during `locationOf`
           }
       }
       
-      val fromStrong = fromAss(assignSAnn, true)
-      val fromWeak = fromAss(assignWAnn, false)
+      val fromAnn = fromAss(assignAnn)
 
-      if (assignSAnn.isEmpty && assignWAnn.isEmpty) None
-      else Some(joinAssignment(fromStrong, fromWeak))
+      if (assignAnn.isEmpty) None
+      else Some(fromAnn)
     }
     
     val loc = {
@@ -191,7 +188,7 @@ trait ConvertAnnots { this: StateChecker =>
         })
         List(AnnotationInfo(assignClass.tpe, args, Nil))
         
-      case AssignLoc(strong, weak) =>
+      case AssignLoc(effs) =>
         def assignAnnots(annTp: Type, effs: Map[Location, Locality]) = {
           (for ((to, from) <- effs) yield {
             val args = location2Arg(to) :: (from match {
@@ -201,7 +198,7 @@ trait ConvertAnnots { this: StateChecker =>
             AnnotationInfo(annTp, args, Nil)
           }).toList
         }
-        assignAnnots(assignClass.tpe, weak) ::: assignAnnots(assignStrongClass.tpe, strong)
+        assignAnnots(assignClass.tpe, effs)
     }
     
     val locAnn = elem._3 match {

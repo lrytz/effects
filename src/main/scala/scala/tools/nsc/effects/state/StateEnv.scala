@@ -12,7 +12,7 @@ abstract class StateEnv extends EffectEnv[StateLattice] {
                   joinLocality}
 
   type Env = StateEnvImpl
-  def empty = EnvMap()
+  def empty: Env = EnvMap()
   
   trait StateEnvImpl extends EnvImpl {
     
@@ -71,16 +71,12 @@ abstract class StateEnv extends EffectEnv[StateLattice] {
             val resLocality = localsTo.map(l => joinLocality(l, assignedLocality)).orElse(Some(assignedLocality))
             EnvMap(othersMap, resLocality)
             
-          case assgn @ AssignLoc(strong, weak) =>
+          case assgn @ AssignLoc(effs) =>
             if (localsTo.isDefined) {
               // @TODO: could exclude the localities of assigned locations which are not in scope? should not happen!
               EnvMap(m, localsTo.map(l => joinLocality(l, assgn.assignedLocality)))
             } else {
-              val strongMap = (m /: strong) {
-                case (m, (to, from)) =>
-                  m.updated(to, from)
-              }
-              val resMap = (strongMap /: weak) {
+              val resMap = (m /: effs) {
                 case (m, (to, from)) =>
                   val res = m.get(to).map(joinLocality(_, from)).getOrElse(from)
                   m.updated(to, res)

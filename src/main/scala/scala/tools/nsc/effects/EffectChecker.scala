@@ -358,8 +358,6 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
 
     if (!inferEffect(sym)) {
       // Check or infer the latent effect
-      if (sym.toString() == "method modify")
-        println()
       val rhsEff = computeEffect(dd.rhs, ddTyper, sym, unit)
       if (!(rhsEff <= symEff))
         effectError(dd, symEff, rhsEff)
@@ -872,8 +870,6 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       tree match {
         case Select(qual, _) => traverse(qual)
         case Ident(_) => ()
-        case t =>
-          throw new MatchError(t)
       }
     }
 
@@ -887,10 +883,17 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
      */
     protected def handleApplication(tree: Tree) {
       val (fun, targs, argss) = decomposeApply(tree)
+      val ctx = rhsTyper.context1
+
       traverseQual(fun)
       traverseTrees(targs)
       for (args <- argss) traverseTrees(args)
-      add(computeApplicationEffect(fun, targs, argss, rhsTyper.context1))
+
+      val (latentEff, pcEffs) = computeApplicationEffect(fun, targs, argss, ctx)
+      var res = adaptLatentEffect(latentEff, fun, targs, argss, ctx)
+      for ((pcEff, pcInfo) <- pcEffs)
+        res = res u adaptPcEffect(pcEff, pcInfo, ctx)
+      add(res)
     }
   }
 
@@ -912,7 +915,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * Computes the effect of applying `fun` to the arguments `targs` and `argss`.
    * This method implements effect polymorphism based on `@pc` annotations.
    */
-  protected def computeApplicationEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context): Elem = {
+  protected def computeApplicationEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context): (Elem, List[(Elem, PCInfo)]) = {
     if (isParamCall(fun, ctx)) {
       /* If the receiver of the function is a parameter then it's a parameter call. Therefore
        * we can ignore the effect, it is represented by the @pc annotation (which is already
@@ -923,7 +926,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
        * The side-effect of the application `a.bar` does not have to be annotated, it's covered
        * by the `@pc(a.bar)` annotation.
        */
-      lattice.bottom
+      (lattice.bottom, Nil)
     } else {
       computeLatentEffect(fun.symbol, ctx, trees = Some((fun, targs, argss)))._1
     }
@@ -951,20 +954,20 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * a paraemter call.
    */
   def computeLatentEffect(fun: Symbol, ctx: Context, visited: Set[Symbol] = Set(),
-                          trees: Option[(Tree, List[Tree], List[List[Tree]])] = None,
-                          pcInfo: Option[PCInfo] = None): (Elem, Set[Symbol]) = {
-    if (visited contains fun) (lattice.bottom, visited)
+                          trees: Option[(Tree, List[Tree], List[List[Tree]])] = None): ((Elem, List[(Elem, PCInfo)]), Set[Symbol]) = {
+    if (visited contains fun) ((lattice.bottom, Nil), visited)
     else {
       val annotated = fromAnnotation(fun.tpe).orElse(lookupExternal(fun))
-      var res = annotated.getOrElse(nonAnnotatedEffect(Some(fun)))
-      var seen = visited
+      val latentEffect = annotated.getOrElse(nonAnnotatedEffect(Some(fun)))
+      val pcEffects = new collection.mutable.ListBuffer[(Elem, PCInfo)]()
+      var seen = visited + fun
 
-      trees map { case (funTree, targs, argss) =>
+/*      trees map { case (funTree, targs, argss) =>
         res = adaptLatentEffect(res, funTree, targs, argss, ctx)
       }
       pcInfo map { case i =>
         res = adaptPcEffect(res, i, ctx)
-      }
+      }*/
         
       // @TODO: as an optimization, we could skip the follwing if "res" is top
       val pcs = pcFromAnnotation(fun.tpe).orElse(lookupExternalPC(fun))
@@ -973,7 +976,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
 
         case Some(PC(pcs)) =>
           for (info @ PCInfo(param, pcfun) <- pcs) {
-            /* The annotated paramCall is annotated as a paramCall in the current context. Then we
+            /* If the annotated paramCall is annotated as a paramCall in the current contex, then we
              * don't need to consider its effect, it's already expressed by an outer @pc annotation.
              * Example:
              * 
@@ -1021,9 +1024,9 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
               if (!forwarded) {
                 pcfun match {
                   case None =>
-                    val (e, v) = anyParamCall(param.sym, ctx, seen)
+                    val (pcEffs, v) = anyParamCall(param.sym, ctx, seen)
+                    pcEffects ++= pcEffs
                     seen = v
-                    res = res u e
 
                   case Some(f) =>
                     /* Include the effect of a parameter call. The effect might be more specific than
@@ -1032,7 +1035,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
                      * 
                      *   pcfun = Function1.apply
                      *   arg = (x => x + 1)
-                     *   arg.tpe = (Int => Int) { def apply(x$1: Int): Int @loc(Fresh) @pc() }
+                     *   arg.tpe = (Int => Int) { def apply(x$1: Int): Int @loc(Fresh) }
                      * 
                      * Then, we'd like to find the symbol of the `apply` method in the refinement,
                      * since it's effect is more specific.
@@ -1046,27 +1049,27 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
                       case Some(q) => q.tpe.member(f.name).suchThat(m => m.overriddenSymbol(f.owner) == f || m == f)
                       case _ => f
                     }
-                    val (e, _) = computeLatentEffect(funSym, ctx, seen, pcInfo = Some(info))
-                    seen += funSym
-                    res = res u e
+                    val ((e, pcEffs), v) = computeLatentEffect(funSym, ctx, seen)
+                    pcEffects ++= (e, info) :: pcEffs
+                    seen = v
                 }
               }
             }
           }
-        
+
         case Some(AnyPC) if (!hasAnyPCAnnotation(ctx)) =>
           // all param calls on the function's parameters
           for (p <- fun.tpe.paramss.flatten) {
-            val (e, v) = anyParamCall(p, ctx, seen)
+            val (pcEffs, v) = anyParamCall(p, ctx, seen)
+            pcEffects ++= pcEffs
             seen = v
-            res = res u e
           }
           // all param calls on `this`, i.e. the functions's owner
-          val (e, v) = anyParamCall(fun.owner, ctx, seen)
+          val (pcEffs, v) = anyParamCall(fun.owner, ctx, seen)
+          pcEffects ++= pcEffs
           seen = v
-          res = res u e
       }
-      (res, seen)
+      ((latentEffect, pcEffects.toList), seen)
     }
   }
 
@@ -1080,17 +1083,18 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * Here, we should consider the apply method of the anonymous function, which is pure, not the
    * apply method of Function1.
    */
-  def anyParamCall(param: Symbol, ctx: Context, visited: Set[Symbol]): (Elem, Set[Symbol]) = {
+  def anyParamCall(param: Symbol, ctx: Context, visited: Set[Symbol]): (List[(Elem, PCInfo)], Set[Symbol]) = {
     val methods = param.tpe.members.filter(m => m.isMethod)
-    var res = lattice.bottom
+    val pcEffects = new collection.mutable.ListBuffer[(Elem, PCInfo)]
     var seen = visited
     for (m <- methods) {
       val pcLoc = if (param.isParameter) ParamLoc(param) else ThisLoc(param)
-      val (e, v) = computeLatentEffect(m, ctx, seen, pcInfo = Some(PCInfo(pcLoc, Some(m))))
+      val ((eff, pcEffs), v) = computeLatentEffect(m, ctx, seen)
+      val pcInfo = PCInfo(pcLoc, Some(m))
+      pcEffects ++= (eff, pcInfo) :: pcEffs
       seen = v
-      res = res u e
     }
-    (res, seen)
+    (pcEffects.toList, seen)
   }
   
 /* @DELETE  def lookupLatentEffect(fun: Symbol) = {
