@@ -1,4 +1,5 @@
 package scala.tools.nsc.effects
+import collection.mutable.ListBuffer
 
 abstract class EnvEffectChecker[L <: CompleteLattice] extends EffectChecker[L] {
   import global._
@@ -59,8 +60,9 @@ abstract class EnvEffectChecker[L <: CompleteLattice] extends EffectChecker[L] {
       newEnvEffectTraverser(tree, env, rhsTyper, sym, unit).compute()
     }
     
-    case class Res(eff: Elem, env: Env)
-    implicit def tuple2Res(t: (Elem, Env)) = Res(t._1, t._2)
+    case class Res(eff: Elem, env: Env, parts: List[Elem])
+    implicit def tuple2Res(t: (Elem, Env))             = Res(t._1, t._2, List(t._1))
+    implicit def tuple2Res(t: (Elem, Env, List[Elem])) = Res(t._1, t._2, t._3)
     
     def analyze(env: Env, tree: Tree): Res = {
       val eff = subtreeEffect(tree, env)
@@ -68,21 +70,26 @@ abstract class EnvEffectChecker[L <: CompleteLattice] extends EffectChecker[L] {
     }
     
     def seq(initEnv: Env, trees: Tree*): Res = {
-      ((lattice.bottom, initEnv) /: trees) {
+      val b = new ListBuffer[Elem]()
+      val r = ((lattice.bottom, initEnv) /: trees) {
         case ((eff, env), tree) =>
           val res = analyze(env, tree)
+          b += res.eff
           (eff u res.eff, res.env)
       }
+      (r._1, r._2, b.toList)
     }
     
     
     def or(initEnv: Env, trees: Tree*): Res = {
+      val b = new ListBuffer[Elem]()
       val e = (lattice.bottom /: trees) {
         case (eff, tree) =>
           val e = subtreeEffect(tree, initEnv)
+          b += e
           eff u e
       }
-      (e, initEnv.applyEffect(e))
+      (e, initEnv.applyEffect(e), b.toList)
     }
 
     override def traverse(tree: Tree) {
@@ -93,7 +100,7 @@ abstract class EnvEffectChecker[L <: CompleteLattice] extends EffectChecker[L] {
           add(statsRes.eff u exprRes.eff)
           
         /* @TODO: CaseDef, Alternative, Sar, Bind, UnApply, ArrayValue, */
-          
+
         case Assign(a, b) =>
           add(seq(env, a, b).eff)
         

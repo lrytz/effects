@@ -1,125 +1,37 @@
 * Session
 
-** applying effects to envs
+import annotation.effects._
+import annotation.effects.pc._
+import annotation.effects.state._
 
-
-@assign(any, b)
-
-@assign(x, any)
-
-
-var x = a               env                    effect of that line         total effect
-def foo() {
-  x = a                 x points to {x, a}     @assign(x, a)
-  x = c                 x points to {x, a, c}  @assign(x, c)               @assign(x, {a, c})
-  a.store(x, b)         merge {a, x, c, b}     @store(a, {x, c, b})        @assign(x, {a, c}) @store(a, {x, c, b})
-  mod(a)                                       @mod(a, x, c, b)            @assign(x, {a, c}) @store(a, {x, c, b}) @mod(a, x, c, b)
-  mod(x)                                       @mod(a, x, c, b)
-  x = d                 x points to {x, a, c, d}
-  mod(a)                                       @mod(a, x, c, b)     NOTE: we don't have to include @mod(d), even though we have @mod(x) and x might point to d.
-  mod(x)                                       @mod(x, a, c, d, b)
+class B
+trait A {
+  def store(b: B): Unit @store(this, b)
 }
 
+def foo(a: A, b: B): Unit @infer = a.store(b)
 
- - when a variable is used in an effect, it's locality is
-   - the locations it has been merged with
-   - the locations it points to
-
- - when a different location is used in an effect, its locality is
-   - the locations it has been merged with
-   - for variables in the merge set, DO NOT LOOK where they point to currently!
-
-
-x = a
-x = b         x -> {a, b}
-y = x         x -> {a, b}, y -> {x, a, b}
-
-c.store(y)    merge{c, y, x, a, b}, x -> {a, b}, y -> {x, a, b}
-
-
-y = z         ..., y -> {x, a, b, z}
-
-mod(c)        ==> @mod(c, y, x, a, b, c)
-
-
-masking
-
- - effects to / on / with variables that get out of scope
- - @store(x, a) where `x` is a locally defined local variable (not a variable of an outer method). could also keep it and just mask it like masking other effects
-
-
-NOTE: the variable of an assign effect is always known, we don't have to generalize it using the environment. this is because assign effects
-can only originate in assign expressions, where the receiver is a known variable (assert that!). ALSO true when the assign effect comes from
-a function application (exmaple below, application to inner has @assign(x, c). We don't go into the env and see what "x" points to, and generalize `x`.
-we just generalize `c`.)
-
-
-
-freshness
-  var x = new A
-  x = b
-
-
-*** first example
-
-def foo(a: A, b: B, c: C) {
-  var x = b
-  def inner(): Unit @store(a, x) @assign(x, c) { a.store(x); x = c }
+def foo(a: A, b1: B, b2: B): B @infer = {
+  var x = b1
+  def inner() = { a.store(x); x = b2 }
   inner()
   x
 }
 
 
-inside `inner`
-
-| init-env | expr       | eff           | merge  | res-env   |
-|----------+------------+---------------+--------+-----------|
-| {}       | a.store(x) | @store(a, x)  | {x, a} | {a, x}    |
-| {a, x}   | x = c      | @assign(x, c) | {x, c} | {a, x, c} |
-
-
-inside `foo`
-
-| init-env | expr      | eff                             | merge             | res-env      |
-|----------+-----------+---------------------------------+-------------------+--------------|
-| {}       | var x = b | @assign(x, b)                   | {x, b}            | {x, b}       |
-| {x, b}   | inner()   | @store(a, {x, b}) @assign(x, c) | {a, x, b}, {x, c} | {a, b, x, c} |
+def foo(a: A, b1: B, b2: B): B @infer = {
+  var x = b1
+  def inner() = { a.store(x); x = b2 }
+  x
+}
 
 
-The resulting effect of `foo` is computed by joining the effects, i.e.
-   @assign(x, b)  ∪  @store(a, {x, b})  ∪  @assign(x, c)
-
-   =>  @assign(x, {b, c}) @store(a, {x, b})        (!! we don't have to look up / merge any more localities !! even if the effect says that `c` is assigned to `x`
-                                                    and `x` is stored in `a`, this does not mean that `c` is stored in `a` !!)
-
-Then, all references to local variables that get out of scope can be removed, i.e.
-
-   => @store(a, b)
-
-
-*** second example: changed `inner`
-Do the assignment first, i.e.
-
-  def inner(): Unit @store(a, {x, c}) @assign(x, c) { x = c; a.store(x)}
-
-
-| init-env | expr       | eff               | merge     | res-env   | notes |
-|----------+------------+-------------------+-----------+-----------+-------|
-| {}       | x = c      | @assign(x, c)     | {x, c}    | {x, c}    |       |
-| {x, c}   | a.store(x) | @store(a, {x, c}) | {a, x, c} | {a, x, c} |       |
-
-in `foo`
-
-| init-env | expr      | eff                                | merge                | res-env      |
-|----------+-----------+------------------------------------+----------------------+--------------|
-| {}       | var x = b | @assign(x, b)                      | {x, b}               | {x, b}       |
-| {x, b}   | inner()   | @store(a, {x, b, c}) @assign(x, c) | {a, x, b, c}, {x, c} | {a, b, x, c} |
-
-Resulting effect:  @assign(x, b)  ∪  @store(a, {x, b, c})  ∪  @assign(x, c)
-
-  ==> @assign(x, {b, c}) @store(a, {x, b, c})
-  ==> @store(a, {b, c})  // which is OK, we don't support strong assignments.
-
+def foo(a: A, b1: B, b2: B): B @infer = {
+  var x = b1
+  def inner() { x = b2; a.store(x)}
+  inner()
+  x
+}
 
 
 * Bugs, Todos

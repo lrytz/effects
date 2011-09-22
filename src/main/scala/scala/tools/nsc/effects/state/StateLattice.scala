@@ -40,7 +40,9 @@ abstract class StateLattice extends CompleteLattice {
    * a fresh value can only be returned by methods that don't have
    * any side-effects.
    * 
-   * @TOOD: compare the implementation of this method with the notes on paper.
+   * @TOOD: double-check this. is it correct?
+   * also, in some cases we put the location to AnyLoc; is it only
+   * here that we have to do so? or also in some places in the checker?
    */
   def updateLocality(eff: Elem, loc: Locality) = {
     if (loc.isFresh) {
@@ -49,9 +51,11 @@ abstract class StateLattice extends CompleteLattice {
       else if (eff._3.isFresh)
         (eff._1, eff._2, AnyLoc)
       else
-        eff // param locations are ok to be mixed with effects (right?)
+        eff
+    } else if (eff._1 == StoreAny) {
+      (eff._1, eff._2, AnyLoc)
     } else {
-      eff
+      (eff._1, eff._2, loc)
     }
   }
 
@@ -176,10 +180,20 @@ abstract class StateLattice extends CompleteLattice {
       case Fresh => false
     }
     
+    /**
+     * Note the difference for parameters and local values / variables:
+     *  - a local variable defined in a method is out of scope outside that method
+     *  - however, parameters also have the method as owner, but they are still in
+     *    scope outside the method.
+     */
     def isInScope(ctx: Context): Boolean = this match {
       case Fresh => true
       case ThisLoc(_) => true
-      case SymLoc(sym) => localIsInScope(sym, ctx)
+      case SymLoc(sym) =>
+        if (sym.isParameter)
+          localIsInScope(sym, ctx)
+        else
+          localIsInScope(sym, ctx.outer)
     }
   }
   case class SymLoc(sym: Symbol) extends Location {

@@ -50,18 +50,8 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
 
 
   override def computeEffect(rhs: Tree, rhsTyper: Typer, sym: Symbol, unit: CompilationUnit) = {
-    val ctx = rhsTyper.context1.outer
-    def maskAssignEffs(m: Map[SymLoc, Locality]) = {
-      m flatMap {
-        case (loc, to) =>
-          if(loc.isInScope(ctx)) {
-            Some((loc, to.filterOutOfScope(ctx)))
-          } else {
-            None
-          }
-      }
-    }
-    
+    val ctx = rhsTyper.context1
+
     def maskStoreEffs(m: Map[Location, LocSet]) = {
       m flatMap {
         case (in, from) =>
@@ -70,6 +60,17 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
             None
           } else {
             Some((in, inScope))
+          }
+      }
+    }
+
+    def maskAssignEffs(m: Map[SymLoc, Locality]) = {
+      m flatMap {
+        case (loc, to) =>
+          if(loc.isInScope(ctx)) {
+            Some((loc, to.filterOutOfScope(ctx)))
+          } else {
+            None
           }
       }
     }
@@ -97,7 +98,9 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
         val effs1 = maskAssignEffs(effs)
         AssignLoc(effs1)
     }
-    val res = e.copy(_1 = maskedStore, _2 = maskedAssign)
+    val maskedLoc = e._3.filterOutOfScope(ctx)
+
+    val res = (maskedStore, maskedAssign, maskedLoc)
     if (res != e) { println("masking effecs:\n  from: "+ e +"\n  to  : "+ res) } // @DEBUG
     res
   }
@@ -113,6 +116,25 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
   class StateTraverser(rhs: Tree, env: Env, rhsTyper: Typer, sym: Symbol, unit: CompilationUnit) extends EnvEffectTraverser(rhs, env, rhsTyper, sym, unit) {
     override def traverse(tree: Tree) {
       tree match {
+        
+        case Block(stats, expr) =>
+          val statsRes = seq(env, stats: _*)
+          val exprRes = analyze(statsRes.env, expr)
+          val eff = (statsRes.eff u exprRes.eff).updateLocality(exprRes.eff._3)
+          add(eff)
+
+        case If(cond, thenExpr, elseExpr) =>
+          val condRes = analyze(env, cond)
+          val thenElseRes = or(condRes.env, thenExpr, elseExpr)
+          val eff = (condRes.eff u thenElseRes.eff).updateLocality(thenElseRes.eff._3) 
+          add(eff)
+
+        case Try(block, catches, finalizer) =>
+          val blockRes = analyze(env, block)
+          // @TODO: catches. the patterns happen in sequence, but the pattern bodies we can treat as `or`, as only one of them gets executed.
+          val finRes = analyze(blockRes.env, finalizer)
+          add(blockRes.eff u finRes.eff) // @TODO: resulting locality is a merge of block and catches (but not the finalizer, that's executed as a statement)
+
         // Apply, TypeApply: handled ok in superclass (EffectTraverser, call to handleApplication)
 
         case Select(qual, name) =>
@@ -241,12 +263,9 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
       val targsRes = seq(funRes.env, targs: _*)
 
       // cannot use `seq` because we need the intermediate results (locations of all args)
-      val (argssRes, flatArgLocs) = (((lattice.bottom, targsRes.env), List[Locality]()) /: argss.flatten) {
-        case (((eff, env), locs), arg) =>
-          val res = analyze(env, arg)
-          ((eff u res.eff, res.env), res.eff._3 :: locs)
-      }
-
+      val argssRes = seq(targsRes.env, argss.flatten: _*)
+      val flatArgLocs = argssRes.parts.map(_._3)
+      
       // build a map from the function's parameter symbols to the localities of the arguments
       val paramsMap: Map[Location, Locality] = {
         // For methods in classes (not objects), modifications to `this` mean modifications to the receiver (funLoc)
