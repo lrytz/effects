@@ -898,18 +898,6 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   }
 
   /**
-   * @implement This method exists outside the EffectTraverser so that it can be
-   * easily overridden by concrete checkers. A simple effect checker might only
-   * override this method and not even implement a custom EffectTraverser. 
-   * 
-   * Returns the latent effect of a function application.
-   */
-/* @DELETE  def latentEffect(fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context) = {
-    lookupLatentEffect(fun.symbol)
-  }
-*/
-
-  /**
    * @implement This method can be overridden by effect traversers.
    * 
    * Computes the effect of applying `fun` to the arguments `targs` and `argss`.
@@ -930,11 +918,6 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     } else {
       computeLatentEffect(fun.symbol, ctx, trees = Some((fun, targs, argss)))._1
     }
-/*
-      val latent = latentEffect(fun, targs, argss, rhsTyper.context1)
-      val adapted = adaptLatentEffect(latent, fun, targs, argss, rhsTyper.context1)
-      adaptToEffectPolymorphism(adapted, fun, targs, argss, rhsTyper.context1)
-*/
   }
 
   /**
@@ -962,13 +945,6 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       val pcEffects = new collection.mutable.ListBuffer[(Elem, PCInfo)]()
       var seen = visited + fun
 
-/*      trees map { case (funTree, targs, argss) =>
-        res = adaptLatentEffect(res, funTree, targs, argss, ctx)
-      }
-      pcInfo map { case i =>
-        res = adaptPcEffect(res, i, ctx)
-      }*/
-        
       // @TODO: as an optimization, we could skip the follwing if "res" is top
       val pcs = pcFromAnnotation(fun.tpe).orElse(lookupExternalPC(fun))
       pcs match {
@@ -1097,12 +1073,6 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     (pcEffects.toList, seen)
   }
   
-/* @DELETE  def lookupLatentEffect(fun: Symbol) = {
-    val eff = fromAnnotation(fun.tpe)
-    val external = eff.orElse(lookupExternal(fun))
-    external.getOrElse(lattice.top)
-  }*/
-  
   /**
    * @implement This method can be overridden by concrete effect checkers. It allows
    * to adapt / change / customize the latent effect, which is obtained from a function's
@@ -1122,18 +1092,6 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
   def adaptPcEffect(eff: Elem, pc: PCInfo, ctx: Context): Elem = {
     eff
   }
-
-  
- /**
-  * This method is overridden by PCTracking, which will adapt the effect of an application
-  * expression mainly in two ways:
-  *  - remove the effect if it's a parameter call
-  *  - add effects caused by `@pc` annotations on `fun`
-  */
-/*  def adaptToEffectPolymorphism(latent: Elem, fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context): Elem = {
-    latent
-  }
-*/
 
   /**
    * *************

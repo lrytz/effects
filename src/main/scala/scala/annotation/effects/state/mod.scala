@@ -65,7 +65,7 @@ class store(in: Any, from: Any*) extends Effect
  * cannot re-assign any outer variables: assigning a field (o.f = x)
  * has effect @mod(o) (or, @store(o, x)).
  *
- * Purity:                   @assign(fresh)
+ * Purity:                   @assign(fresh) == @assign()
  * Assign a fresh value:     @assign(l) == @assign(l, fresh)
  * Unknown target:           @assign(l, any)
  * Assign any variable to l: @assign(any, l)

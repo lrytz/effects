@@ -7,6 +7,8 @@ import collection.immutable.{Set, Map}
 abstract class StateLattice extends CompleteLattice {
   val global: Global
   import global._
+  import analyzer.Context
+
 
   type Elem = (Store, Assignment, Locality)
 
@@ -33,16 +35,6 @@ abstract class StateLattice extends CompleteLattice {
   def mkElem(loc: Locality): Elem      = (StoreLoc(), AssignLoc(), loc)
 
   /**
-   * Join effects, e.g. in
-   * 
-   *   if (..) { x = a } else { if (..) x = b }
-   *   
-   * the resulting effect is @assign(x, {a, b})
-   */
-  def join(a: Elem, b: Elem) =
-    (joinStore(a._1, b._1), joinAssignment(a._2, b._2), joinLocality(a._3, b._3))
-
-  /**
    * Change the returned locality of an effect, while making sure
    * that the result is a well-formed effect triple. Simply said,
    * a fresh value can only be returned by methods that don't have
@@ -63,6 +55,16 @@ abstract class StateLattice extends CompleteLattice {
     }
   }
 
+  /**
+   * Join effects, e.g. in
+   * 
+   *   if (..) { x = a } else { if (..) x = b }
+   *   
+   * the resulting effect is @assign(x, {a, b})
+   */
+  def join(a: Elem, b: Elem) =
+    (joinStore(a._1, b._1), joinAssignment(a._2, b._2), joinLocality(a._3, b._3))
+
   def joinStore(a: Store, b: Store): Store = (a, b) match {
     case (StoreAny, _) | (_, StoreAny) =>
       StoreAny
@@ -77,9 +79,6 @@ abstract class StateLattice extends CompleteLattice {
       StoreLoc(merged ++ onlyInB)
   }
 
-  /**
-   * Joining a strong and a weak assignment results in a weak assigment.
-   */
   def joinAssignment(a: Assignment, b: Assignment): Assignment = (a, b) match {
     case (AssignAny(as), b) =>
       AssignAny(joinLocality(as, b.assignedLocality))
@@ -122,7 +121,6 @@ abstract class StateLattice extends CompleteLattice {
       })
   }
   
-  // strong update is smaller than weak update
   def lteAssignment(a: Assignment, b: Assignment) = (a, b) match {
     case (a, AssignAny(bs)) => lteLocality(a.assignedLocality, bs)
     case (AssignAny(as), b) => false
@@ -150,12 +148,19 @@ abstract class StateLattice extends CompleteLattice {
         s.isEmpty || s.toList == List(Fresh)
       case _ => false
     }
+    
+    def filterOutOfScope(ctx: Context): Locality
   }
-  case object AnyLoc extends Locality
+  case object AnyLoc extends Locality {
+    def filterOutOfScope(ctx: Context) = AnyLoc
+  }
   case class LocSet(s: Set[Location] = Set()) extends Locality {
     def this(l: Location) = this(Set(l))
     
     def union(b: LocSet) = LocSet(s union b.s)
+    def add(loc: Location) = LocSet(s + loc)
+    
+    def filterOutOfScope(ctx: Context) = LocSet(s.filter(_.isInScope(ctx)))
   }
   object LocSet {
     def apply(l: Location): LocSet = new LocSet(l)
@@ -170,11 +175,45 @@ abstract class StateLattice extends CompleteLattice {
       case ThisLoc(_) => false
       case Fresh => false
     }
+    
+    def isInScope(ctx: Context): Boolean = this match {
+      case Fresh => true
+      case ThisLoc(_) => true
+      case SymLoc(sym) => localIsInScope(sym, ctx)
+    }
   }
-  case class SymLoc(sym: Symbol) extends Location
+  case class SymLoc(sym: Symbol) extends Location {
+    override def hashCode() = sym.hashCode
+    override def equals(other: Any) = other match {
+      case SymLoc(otherSym) => sym.owner == otherSym.owner && sym.name == otherSym.name
+      case _ => false
+    }
+  }
   case class ThisLoc(sym: Symbol) extends Location
   case object Fresh extends Location
   
+  
+  /**
+   * Is the local value / variable or paramter `local` in scope with
+   * respect to context `ctx`?
+   *
+   * This is checked by looking at the owner of `ctx` and all owner
+   * symbols of its `outer` contexts. If any of these symbols is the
+   * same as the owner of `local`, then that local value is in scope
+   * with respect to that context.
+   * 
+   * Note that this only works correctly for local values / variables
+   * and parameters. Inherited fields can be in scope while only a
+   * subclass is in the context chain, not the actual owner of the field.
+   */
+  def localIsInScope(local: Symbol, ctx: Context): Boolean = {
+    def contextHasOwner(ctx: Context, owner: Symbol): Boolean = {
+      ctx.owner == owner || (ctx.outer != ctx && contextHasOwner(ctx.outer, owner))
+    }
+    contextHasOwner(ctx, local.owner)
+  }
+
+
 
   /**
    * State modifications
@@ -238,7 +277,13 @@ abstract class StateLattice extends CompleteLattice {
   }
   case class AssignAny(to: Locality) extends Assignment {
     def assignedLocality = to
-  }
+  } 
+
+  /**
+   * Invariant: the keys of the `effs` map can only be SymLoc locations
+   * with local variables - @TODO: change the types accordingly. maybe add
+   * some assertions.
+   */
   case class AssignLoc(effs: Map[Location, Locality] = Map()) extends Assignment {
     def this(to: Location, from: Locality) = {
       this(Map(to -> from))

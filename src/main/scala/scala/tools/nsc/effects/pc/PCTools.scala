@@ -9,7 +9,7 @@ trait PCTools[L <: CompleteLattice] { this: EffectChecker[L] =>
     val global: PCTools.this.global.type = PCTools.this.global
   }
 
-  import pcLattice.{PC, AnyPC, PCInfo, PCLoc, ParamLoc, ThisLoc, PCElem, sameParam}
+  import pcLattice.{PC, AnyPC, PCInfo, PCLoc, ParamLoc, ThisLoc, PCElem/*, sameParam*/}
 
   lazy val pcPhase = currentRun.phaseNamed("pcChecker")
   
@@ -57,22 +57,6 @@ trait PCTools[L <: CompleteLattice] { this: EffectChecker[L] =>
   /*
    * Helper functions
    */
-  
-  /**
-   * @TODO: what about params of Function trees?!? Or, for now, only param call polymorphism on methods, not on functions?
-   * 
-   * @TODO: check where this function is used, how it's used.
-   */
-/*  def isParam(param: Symbol, currentMethod: Symbol): Boolean = {
-    if (currentMethod == NoSymbol) false
-    else if (!currentMethod.isMethod) isParam(param, currentMethod.owner)
-    else {
-      // without atPhase there can be CyclicReferences
-      val paramss = atPhase(currentRun.typerPhase)(currentMethod.paramss)
-      // "sameParam" compares name and owner (why: see its doc).
-      paramss.exists(_.exists(sameParam(_, param))) || isParam(param, currentMethod.owner)
-    }
-  }*/
   
   lazy val pcClass = definitions.getClass("scala.annotation.effects.pc.pc")
   lazy val anyPcClass = definitions.getClass("scala.annotation.effects.pc.anyPc")

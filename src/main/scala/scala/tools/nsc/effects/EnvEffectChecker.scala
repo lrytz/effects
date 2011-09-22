@@ -5,7 +5,7 @@ abstract class EnvEffectChecker[L <: CompleteLattice] extends EffectChecker[L] {
   import analyzer.{Typer, Context}
 
   import lattice.{Elem, toElemOps}
-  import pcLattice.{AnyPC, PC, PCInfo, ThisLoc, ParamLoc, sameParam}
+  import pcLattice.{AnyPC, PC, PCInfo, ThisLoc, ParamLoc}
 
   /**
    * @implement
@@ -14,9 +14,7 @@ abstract class EnvEffectChecker[L <: CompleteLattice] extends EffectChecker[L] {
    * side effects. This can be implemented by overriding this value with a custom
    * EffectEnv instance. See also documentation on EffectEnv
    */
-  val effectEnv: EffectEnv[L] { val checker: EnvEffectChecker.this.type } /*= new NoEffectEnv[L] {
-    val checker: EnvEffectChecker.this.type = EnvEffectChecker.this
-  }*/
+  val effectEnv: EffectEnv[L] { val checker: EnvEffectChecker.this.type }
   import effectEnv.Env
   
   
@@ -87,22 +85,6 @@ abstract class EnvEffectChecker[L <: CompleteLattice] extends EffectChecker[L] {
       (e, initEnv.applyEffect(e))
     }
 
-    /* @TODO: probably we don't even need that, because applying (e1 u e2) to an environment
-     * already gives the most conservative resulting environment
-     * 
-     */
-/*    def loop(initEnv: Env, tree: Tree): Res = {
-      var resEff = lattice.bottom
-      var resEnv = initEnv
-      var eff = subtreeEffect(tree, resEnv)
-      while (eff != resEff) {
-        resEff = eff
-        resEnv = resEnv.applyEffect(eff)
-        eff = subtreeEffect(tree, resEnv)
-      }
-      (resEff, resEnv)
-    }*/
-
     override def traverse(tree: Tree) {
       tree match {
         case Block(stats, expr) =>
@@ -144,53 +126,37 @@ abstract class EnvEffectChecker[L <: CompleteLattice] extends EffectChecker[L] {
       val funSym = fun.symbol
       val ctx = rhsTyper.context1
 
-      def adaptEffs(latent: Elem, pcs: List[(Elem, PCInfo)]) = {
-        var res = adaptLatentEffect(latent, fun, targs, argss, ctx)
-        for ((pcEff, pcInfo) <- pcs)
-          res = res u adaptPcEffect(pcEff, pcInfo, ctx)
-        res
-      }
-      
       val funRes = qualEffect(fun, env)
       val targsRes = seq(funRes.env, targs: _*)
       val argssRes = seq(targsRes.env, argss.flatten: _*)
 
       val (latentEff, pcEffs) = computeApplicationEffect(fun, targs, argss, rhsTyper.context1)
+      val adaptedLatent = adaptLatentEffect(latentEff, fun, targs, argss, ctx)
+      val adaptedPcs = pcEffs.map(e => adaptPcEffect(e._1, e._2, ctx))
       
-
       val appEff = if (pcEffs.isEmpty) {
-        withEnv(argssRes.env) { adaptLatentEffect(latentEff, fun, targs, argss, ctx) }
+        adaptedLatent
       } else {
-        var prevRes = withEnv(argssRes.env) { adaptEffs(latentEff, pcEffs) }
-        var appEnv = argssRes.env.applyEffect(prevRes)
-        var res = withEnv(appEnv) { adaptEffs(latentEff, pcEffs) }
-        while (!(res <= prevRes)) {
-          prevRes = res
-          appEnv = appEnv.applyEffect(prevRes)
-          res = withEnv(appEnv) { adaptEffs(latentEff, pcEffs) }
-        }
-        res
+        combineLatentPc(adaptedLatent, adaptedPcs, argssRes.env)
       }
 
       add(funRes.eff u targsRes.eff u argssRes.eff u appEff)
     }    
   }
-  
+
   /**
-   * This vairable makes the current environment available during
-   * `computeApplicationEffect`. This method calls `adaptLatentEffect`
-   * and `adaptPcEffect`, which can be overridden to adapt the effects
-   * on a function to the current environment.
+   * Combine the latent effect of a function with the effects that are due
+   * to effect polymorphism.
    * 
-   * For an example, see the implementation of StateChecker.
+   * Since we're in an effect system with environment, where the order of
+   * effects matters (effects are applied in sequence to environments), there
+   * is no generic way of combining effects.
+   * 
+   * At a function application, the `latent` and `pcs` effects have to be
+   * combined in a worst-case way, because we don't know if they happen in
+   * sequence, in parallel or even multiple times.
+   * 
+   * @TODO: example
    */
-  private var _currentEnv: Env = _ // effectEnv.empty (does not work, creates initialization deadlock)
-  def currentEnv = _currentEnv
-  def withEnv[T](env: Env)(op: => T): T = {
-    val savedEnv = _currentEnv
-    _currentEnv = env
-    val res = op
-    _currentEnv = savedEnv
-    res
-  }
+  def combineLatentPc(latent: Elem, pcs: List[Elem], env: Env): Elem
 }

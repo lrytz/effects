@@ -155,9 +155,9 @@ trait ConvertAnnots { this: StateChecker =>
     
     /* @TODO: this is already wrong, it yields a tree which pretty-prints as
      *   state.this.any
-     *   
+     *
      *   Select(This(state), "any")
-     * 
+     *
      * where `state` is symbol of package `state`.
      */
     val anyLocArg = gen.mkAttributedRef(anyLocObject)

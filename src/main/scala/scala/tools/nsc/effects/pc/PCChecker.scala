@@ -11,11 +11,6 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
   override val runsBefore = List("pickler")
   val phaseName = "pcChecker"
 
-/* @DELETE  val pcCommons = new PCCommons {
-    val global: PCChecker.this.global.type = PCChecker.this.global
-  }
-  import pcCommons._ */
-
   val lattice: pcLattice.type = pcLattice
   import lattice.{PC, AnyPC, PCInfo, ThisLoc, ParamLoc, sameParam, Elem, toElemOps}
   

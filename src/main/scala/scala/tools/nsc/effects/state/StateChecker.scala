@@ -30,7 +30,7 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
   val effectEnv = new StateEnv {
     val checker: StateChecker.this.type = StateChecker.this
   }
-  import effectEnv.{Env, EnvMap, AnyEnv}
+  import effectEnv.{Env, AnyEnv}
 
   override def nonAnnotatedEffect(method: Option[Symbol]): Elem = {
     def isNestedInMethod(sym: Symbol): Boolean = {
@@ -51,13 +51,26 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
 
   override def computeEffect(rhs: Tree, rhsTyper: Typer, sym: Symbol, unit: CompilationUnit) = {
     val ctx = rhsTyper.context1.outer
-    def onlyInScope(m: Map[Location, Locality]) = {
-      m.filter {
-        case (SymLoc(sym), to) =>
-          assert(sym.isLocal, sym)
-          localIsInScope(sym, ctx)
-        case _ =>
-          true
+    def maskAssignEffs(m: Map[Location, Locality]) = {
+      m flatMap {
+        case (loc, to) =>
+          if(loc.isInScope(ctx)) {
+            Some((loc, to.filterOutOfScope(ctx)))
+          } else {
+            None
+          }
+      }
+    }
+    
+    def maskStoreEffs(m: Map[Location, LocSet]) = {
+      m flatMap {
+        case (in, from) =>
+          val inScope = from.filterOutOfScope(ctx)
+          if ((in == Fresh && inScope.isFresh) || !in.isInScope(ctx)) {
+            None
+          } else {
+            Some((in, inScope))
+          }
       }
     }
     
@@ -69,38 +82,28 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
      * The effect @assign(x, fresh) from the body is not observable outside the function.
      * 
      * @TODO: should this be done more granularly, i.e. at every place where variables can
-     * get out of scope, such as the end of a Block? Does it matter to keep them until the
-     * 
-     * Note that we don't need to do anything similar for state modificaiton effects. The
-     * locations used in @state effects are never local variables that can get out of scope.
-     * Instead, @state effects only refer to parameters or `this`, and these don't get out
-     * of scope.
-     * 
-     * However, we remove effects of the form @mod(fresh), since they're equivalent to but
-     * more verbose than @mod().
+     * get out of scope, such as the end of a Block?
      */
     val e = super.computeEffect(rhs, rhsTyper, sym, unit)
     val maskedStore = e._1 match {
       case sa @ StoreAny => sa
       case StoreLoc(effs) =>
-        StoreLoc(effs.filterNot {
-          case (Fresh, v) => v.isFresh
-          case _ => false
-        })
+        val effs1 = maskStoreEffs(effs)
+        StoreLoc(effs1)
     }
     val maskedAssign = e._2 match {
       case aa @ AssignAny(_) => aa
       case AssignLoc(effs) =>
-        val effs1 = onlyInScope(effs)
+        val effs1 = maskAssignEffs(effs)
         AssignLoc(effs1)
     }
     val res = e.copy(_1 = maskedStore, _2 = maskedAssign)
-    if (res != e) { println("masking assign effect to out-of-scope variables:\n  from: "+ e +"\n  to  : "+ res) } // @DEBUG
+    if (res != e) { println("masking effecs:\n  from: "+ e +"\n  to  : "+ res) } // @DEBUG
     res
   }
   
   /**
-   * @TODO: override computePrimConstrEffect to do masking, as in computeEffect above?
+   * @TODO: override computePrimConstrEffect to do masking, similar to computeEffect above.
    */
   
   override def newEnvEffectTraverser(rhs: Tree, env: Env, rhsTyper: Typer, sym: Symbol, unit: CompilationUnit): EffectTraverser =
@@ -141,8 +144,8 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
             handleApplication(tree)
           } else {
             // an Ident tree can refer to parameters, local values or packages in the `root` package.
-            if (sym.owner.isRootPackage) add(mkElem(AnyLoc)) // @TODO: should `root` package be handled in `selectedLocality`?
-            else add(mkElem(selectedLocality(sym, env, rhsTyper.context1)))
+            // in the last case, selectedLocality returns AnyLoc
+            add(mkElem(selectedLocality(sym, env, rhsTyper.context1)))
           }
 
         case Assign(lhs, rhs) =>
@@ -233,69 +236,33 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
       val ctx = rhsTyper.context1
       
       val funRes = qualEffect(fun, env)
-      val funLoc = funRes.eff._3 // @TODO: this only works "by chance", because we use "qualEffect", which actually returns the locality of the function's qualifier. maybe just rename "funLoc" to "qualLoc" to make things clear.
+      val qualLoc = funRes.eff._3
       
       val targsRes = seq(funRes.env, targs: _*)
 
-      // foldRight traverses left to right (that's the order in which
-      // effects happen, the order of evaluation for the arguments).
+      // cannot use `seq` because we need the intermediate results (locations of all args)
       val (argssRes, flatArgLocs) = (((lattice.bottom, targsRes.env), List[Locality]()) /: argss.flatten) {
         case (((eff, env), locs), arg) =>
           val res = analyze(env, arg)
           ((eff u res.eff, res.env), res.eff._3 :: locs)
       }
 
-      
-      def applicationEnv(localEnv: Env): Env = {
-        // build a map from the function's parameter symbols to the localities of the arguments
-        val paramsMap: Map[Location, Locality] = {
-          // For methods in classes (not objects), modifications to `this` mean modifications to the receiver (funLoc)
-          val receiverMap = if (funSym.owner.isModuleClass) Map() else Map(ThisLoc(funSym.owner) -> funLoc)
-          val flatParams = funSym.tpe.paramss.flatten
-          receiverMap ++ ((flatParams map SymLoc) zip flatArgLocs)
-        }
-      
-        /* The environment that is used for adapting the application effect, see adaptLatentEffect.
-         * It's important to start from the current environment, because the effect annotations of
-         * the applied function might refer to params / locals of the current method, which have a
-         * specific locality in the current environment. Example
-         * 
-         * def f(a: A) {
-         *   var x = a
-         *   def g(): Unit @mod(x) = { x.modify() }
-         *   g()
-         * }
-         * 
-         * When applying `g`, the latent effect is `@mod(x)`, which at this point of the program
-         * has to be mapped to `@mod(a)`.
-         */
-        localEnv.mapLocations(paramsMap)
-      }
-      
-      def adaptEffs(latent: Elem, pcs: List[(Elem, PCInfo)]): Elem = {
-        val lat = adaptLatentEffect(latent, fun, targs, argss, ctx)
-        var res = lat
-        for ((pcEff, pcInfo) <- pcs)
-          res = res u adaptPcEffect(pcEff, pcInfo, ctx)
-        res.updateLocality(lat._3)
+      // build a map from the function's parameter symbols to the localities of the arguments
+      val paramsMap: Map[Location, Locality] = {
+        // For methods in classes (not objects), modifications to `this` mean modifications to the receiver (funLoc)
+        val receiverMap = if (funSym.owner.isModuleClass) Map() else Map(ThisLoc(funSym.owner) -> qualLoc)
+        val flatParams = funSym.tpe.paramss.flatten
+        receiverMap ++ ((flatParams map SymLoc) zip flatArgLocs)
       }
 
-      
       val (latentEff, pcEffs) = computeApplicationEffect(fun, targs, argss, rhsTyper.context1)
-      
+      val mappedLatent = mapLocalities(latentEff, argssRes.env, paramsMap)
+      val mappedPcs = pcEffs.map(e => mapPcLocalities(e._1, e._2, argssRes.env, paramsMap))
       
       val appEff = if (pcEffs.isEmpty) {
-        withEnv(applicationEnv(argssRes.env)) { adaptLatentEffect(latentEff, fun, targs, argss, ctx) }
+        mappedLatent
       } else {
-        var prevRes = withEnv(applicationEnv(argssRes.env)) { adaptEffs(latentEff, pcEffs) }
-        var appEnv = argssRes.env.applyEffect(prevRes)
-        var res = withEnv(applicationEnv(appEnv)) { adaptEffs(latentEff, pcEffs) }
-        while (!(res <= prevRes)) {
-          prevRes = res
-          appEnv = appEnv.applyEffect(prevRes)
-          res = withEnv(applicationEnv(appEnv)) { adaptEffs(latentEff, pcEffs) }
-        }
-        res
+        combineLatentPc(mappedLatent, mappedPcs, argssRes.env)
       }
       
       val totalEff = funRes.eff u targsRes.eff u argssRes.eff u appEff
@@ -303,26 +270,57 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
     }
   }
   
-  override def adaptLatentEffect(eff: Elem, fun: Tree, targs: List[Tree], argss: List[List[Tree]], ctx: Context): Elem = {
-    mapLocalities(eff, currentEnv, ctx)
-    
-    /* @TODO first thought: this is not enough!!!
-     *
-     * If there are multiple assign / modification effects in `eff`, then these need to be
-     * combined, the localities must be merged until reaching a fixpoint. For example
-     * 
-     *   def foo(a: A, b: B) = {
-     *     a.store(b)
-     *     b.modify()
-     *   }
-     * 
-     * second thought: really???
-     * (=> continue example: local environment that is modified by the two effects. does it always stay well-formed?)
-     */
-    
+  
+  /**
+   * During a function application, combine a latent effect and effects
+   * obtained through polymorphism.
+   * 
+   * We don't know in which order these effects happen in the applied
+   * method. Therefore we need to assume worst-case. We apply all effects
+   * to the environment, and then re-map the locations in the effects
+   * using that generalized environment. This is done until reaching
+   * a fixpoint.
+   */
+  def combineLatentPc(latent: Elem, pcs: List[Elem], env: Env): Elem = {
+    var prevEnv = env
+    var prevEff = (latent :: pcs).reduceRight(_ u _)
+
+    var resEnv = env.applyEffect(latent)
+    for (pc <- pcs) resEnv = resEnv.applyEffect(pc)
+    var resLatent = applyEnv(latent, resEnv)
+    var resPcs = pcs.map(applyEnv(_, resEnv))
+    var resEff = (resLatent :: resPcs).reduceRight(_ u _)
+
+    while(!(resEff <= prevEff)) {
+      prevEnv = resEnv
+      prevEff = resEff
+      
+      resEnv = resEnv.applyEffect(resLatent)
+      for (pc <- resPcs) resEnv = resEnv.applyEffect(pc)
+      resLatent = applyEnv(resLatent, resEnv)
+      resPcs = resPcs.map(applyEnv(_, resEnv))
+      resEff = (resLatent :: resPcs).reduceRight(_ u _)
+    }
+    resEff
   }
 
-  override def adaptPcEffect(eff: Elem, pc: PCInfo, ctx: Context): Elem = {
+  /**
+   * Map the locations in `eff` using `env` and the `paramsMap`. For example, in
+   *   
+   *   class A { def mod(): Unit @mod(this) }
+   *   def f(a: A) = { a.mod() }
+   * 
+   * the effect of the application `a.mod()` is transformed into `@mod(a)`.
+   * 
+   * The env is applied first. This is because the target locations in the `paramsMap` are
+   * already according to the current env, and therefore they don't need to be mapped over
+   * `env` again.
+   */
+  def mapLocalities(eff: Elem, env: Env, paramsMap: Map[Location, Locality]) = {
+    applyParamsMap(applyEnv(eff, env), paramsMap)
+  }
+
+  def mapPcLocalities(pcEff: Elem, pcInfo: PCInfo, env: Env, paramsMap: Map[Location, Locality]) = {
     /* Example: consider we treat the application of method `foo`, e.g.
      * 
      *   qual.foo(arg)
@@ -332,12 +330,10 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
      *   def foo(a: A) @pc(a.bar(_))
      *   class A { def bar(b: B) @mod(this) @mod(b) }
      * 
-     * Then the arguments to `adaptPcEffect` are
-     *   eff   = @mod(this) @mod(b)
-     *   pc    = PCInfo(a, bar)
-     * 
-     * We have to map the localities of `@mod(this) @mod(b)` according to the
-     * current environment (in which "a" is mapped to "localityOf(arg)").
+     * Then the arguments to `mapPcLocalities` are
+     *   pcEff  = @mod(this) @mod(b)
+     *   pcInfo = PCInfo(a, bar)
+     *
      * The correct locality map to apply is the following:
      * 
      *   this -> { localityOf(arg) }
@@ -347,43 +343,47 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
      * parameter location ("b") won't be found in the current environemnt and
      * will be mapped to AnyLoc.
      */
-    val paramLoc = pc.param match {
+    val paramLoc = pcInfo.param match {
       case pcLattice.ThisLoc(c) =>
         ThisLoc(c)
       case pcLattice.ParamLoc(p) =>
         SymLoc(p)
     }
-    // @TODO: fix when enabling PC calls on `this`
 
-    val pcEnv = pc.fun match {
-      case None => AnyEnv
+    val pcMap: Map[Location, Locality] = pcInfo.fun match {
       case Some(fun) =>
-        val thisLocality = currentEnv.lookup(paramLoc).getOrElse(AnyLoc)
-        val map: Map[Location, Locality] = Map(ThisLoc(fun.owner) -> thisLocality) ++ (fun.paramss.flatten.map(p => SymLoc(p) -> AnyLoc))
-        currentEnv.mapLocations(map)
+        val thisLocality = paramsMap.getOrElse(paramLoc, AnyLoc) // currentEnv.lookup(paramLoc).getOrElse(AnyLoc)
+        Map(ThisLoc(fun.owner) -> thisLocality) ++ (fun.paramss.flatten.map(p => SymLoc(p) -> AnyLoc))
+      case None =>
+        abort("no function defined for pc call: "+ pcEff +", "+ pcInfo)
     }
-    mapLocalities(eff, pcEnv, ctx)
+    
+    mapLocalities(pcEff, env, pcMap)
   }
 
   /**
-   * Map the locations mentioned in `eff` according to the environment `env` and
-   * the context `ctx`. This method is used in method applications for adapting
-   * the locations of state effects. For example, in
-   *   
-   *   class A { def mod(): Unit @mod(this) }
-   *   def f(a: A) = { a.mod() }
-   * 
-   * the effect of the application `a.mod()` is transformed into `@mod(a)`.
+   * Map the locations in `eff` according to `env`.
    */
-  def mapLocalities(eff: Elem, env: Env, ctx: Context) = {
+  def applyEnv(eff: Elem, env: Env): Elem = {
+    applyLocationTransform(eff, env.lookup(_))
+  }
+  
+  /**
+   * Map the locations in `eff` according to `paramsMap`.
+   */
+  def applyParamsMap(eff: Elem, paramsMap: Map[Location, Locality]): Elem = {
+    applyLocationTransform(eff, loc => paramsMap.getOrElse(loc, LocSet(loc)))
+  }
+  
+  def applyLocationTransform(eff: Elem, trans: Location => Locality) = {
     val store = eff._1 match {
       case StoreAny => StoreAny
       case StoreLoc(effs) =>
         ((StoreLoc(): Store) /: effs) {
           case (store, (in, from)) =>
-            val mappedFrom = mapLocality(from, env, ctx)
+            val mappedFrom = mapLocality(from, trans)
             var res = store
-            localityOf(in, env, ctx) match {
+            trans(in) match {
               case AnyLoc =>
                 res = StoreAny
               case LocSet(locs) =>
@@ -392,117 +392,59 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
             res
         }
     }
-    
+
     val assign = eff._2 match {
-      case AssignAny(to) => AssignAny(mapLocality(to, env, ctx))
+      case AssignAny(to) => AssignAny(mapLocality(to, trans))
       case AssignLoc(effs) =>
-        val mapEffs = effs.map(e => (e._1, mapLocality(e._2, env, ctx)))
+        val mapEffs = effs.map(e => (e._1, mapLocality(e._2, trans)))
         AssignLoc(mapEffs)
     }
     
-    val loc = mapLocality(eff._3, env, ctx)
-      
+    val loc = mapLocality(eff._3, trans)
     (store, assign, loc)
+
   }
-    
-  def mapLocality(loc: Locality, env: Env, ctx: Context) = loc match {
+  
+  def mapLocality(loc: Locality, trans: Location => Locality) = loc match {
     case AnyLoc => AnyLoc
     case LocSet(locs) =>
-      ((LocSet(): Locality) /: locs)((set, loc) => joinLocality(set, localityOf(loc, env, ctx) /* map.getOrElse(loc, nonMappedLocality(loc, ctx))*/))
+      ((LocSet(): Locality) /: locs)((set, loc) => joinLocality(set, trans(loc)))
   }
   
-  /**
-   * Is the local value / variable or paramter `local` in scope with
-   * respect to context `ctx`?
-   *
-   * This is checked by looking at the owner of `ctx` and all owner
-   * symbols of its `outer` contexts. If any of these symbols is the
-   * same as the owner of `local`, then that local value is in scope
-   * with respect to that context.
-   * 
-   * Note that this only works correctly for local values / variables
-   * and parameters. Inherited fields can be in scope while only a
-   * subclass is in the context chain, not the actual owner of the field.
-   */
-  def localIsInScope(local: Symbol, ctx: Context): Boolean = {
-    def contextHasOwner(ctx: Context, owner: Symbol): Boolean = {
-      ctx.owner == owner || (ctx.outer != ctx && contextHasOwner(ctx.outer, owner))
-    }
-    contextHasOwner(ctx, local.owner)
-  }
 
   /**
-   * Is the local value / variable or parameter `local` defined in the
-   * context `ctx`?
-   *
-   * Assumes that the symbol `local` is in scope with respect to `ctx`.
+   * Check if the owner chain of `sym` contains `owner`.
    */
-  def definedInCurrentMethod(local: Symbol, ctx: Context): Boolean = {
-    !localIsInScope(local, ctx.outer)
+  def hasOwner(sym: Symbol, owner: Symbol): Boolean = {
+    if (sym == NoSymbol) false
+    else if (sym.owner == owner) true
+    else hasOwner(sym.owner, owner)
   }
   
+  /**
+   * Is the symbol `sym` defined in an enclosing method?
+   * For each enclosing method, we check if the symbol is defined in it.
+   */
+  def definedInEnclMethod(sym: Symbol, rhsCtx: Context): Boolean = {
+    if (rhsCtx.outer == rhsCtx) false
+    else hasOwner(sym, rhsCtx.owner) || definedInEnclMethod(sym, rhsCtx.enclMethod)
+  }
   
   /**
    * The locality of a selected symbol, i.e. the locality of a Select or Ident tree.
    * 
-   *  - if the symbol is a parameter of the current method, or a local value / variable
-   *    defined in the current method, then look up the locality in the environment
-   *
-   *  - if the symbol is a parameter of an outer method, or a local value / variable
-   *    defined in an outer method, SymLoc(sym)
+   *  - if the symbol is a parameter or a local value / variable defined in the current
+   *    or an outer method, then look up the locality in the environment
    *
    *  - if the symbol is anything else, AnyLoc
    */
   def selectedLocality(sym: Symbol, env: Env, ctx: Context): Locality = {
-    val loc = SymLoc(sym)
-    val res = if(sym.isParameter || sym.isLocal) {
-      assert(localIsInScope(sym, ctx), "local not in scope: "+ sym)
-      if (definedInCurrentMethod(sym, ctx)) {
-        env.lookup(loc).getOrElse({
-          // the default location of a local symbol defined in the current method.
-          if (sym.isParameter) LocSet(loc)
-          else LocSet(Fresh)
-        })
-      } else {
-        // it's a local value / param from an outer method.
-        LocSet(loc)
-      }
+    val res = if((sym.isParameter || sym.isLocal) && definedInEnclMethod(sym, ctx)) {
+      env.lookup(SymLoc(sym))
     } else {
       AnyLoc
     }
     println("locality of selected "+ sym +" is "+ res) // @DEBUG
     res
-  }
-  
-  /**
-   * The locality of a location, considering the current environemnt `env` and the
-   * current context `ctx`.
-   * 
-   * This method is used by `mapLocalities` (i.e. `mapLocality`), see its documentation.
-   *
-   * It works similarly to the method `selectedLocality` above, see its documentation.
-   */
-  def localityOf(loc: Location, env: Env, ctx: Context): Locality = loc match {
-    case SymLoc(sym) =>
-      assert(sym.isParameter || sym.isLocal)
-      val res = if (localIsInScope(sym, ctx)) {
-        selectedLocality(sym, env, ctx)
-      } else {
-        env.lookup(loc).getOrElse(AnyLoc)
-      }
-      println("locality of mapped "+ sym +" is "+ res) // @DEBUG
-      res
-
-    case ThisLoc(_) =>
-      /* @TODO: what's a good default? basically, the default should never happen
-       * to be used. When looking up the locality of a ThisLoc, it can only be
-       * during `adaptLatentEffect` or `adaptPcEffect`, and then the `ThisLoc`
-       * should be present.
-       */
-      env.lookup(loc).getOrElse(AnyLoc)
-
-    case Fresh =>
-      // @TODO: can this case ever arise? 
-      LocSet(Fresh)
   }
 }
