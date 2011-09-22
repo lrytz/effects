@@ -51,7 +51,7 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
 
   override def computeEffect(rhs: Tree, rhsTyper: Typer, sym: Symbol, unit: CompilationUnit) = {
     val ctx = rhsTyper.context1.outer
-    def maskAssignEffs(m: Map[Location, Locality]) = {
+    def maskAssignEffs(m: Map[SymLoc, Locality]) = {
       m flatMap {
         case (loc, to) =>
           if(loc.isInScope(ctx)) {

@@ -106,8 +106,11 @@ trait ConvertAnnots { this: StateChecker =>
               val fromLoc = locList2Locality(from)
               to match {
                 case Right(_) => AssignAny(fromLoc)
-                case Left(toLoc) =>
+                case Left(toLoc @ SymLoc(_)) =>
                   assign.include(toLoc, fromLoc)
+                case _ =>
+                  unit.error(ann.pos, "@assign effect to a non-variable: "+ to)
+                  assign
               }
             case _ =>
               assign // again, there were errors reported during `locationOf`
@@ -189,7 +192,7 @@ trait ConvertAnnots { this: StateChecker =>
         List(AnnotationInfo(assignClass.tpe, args, Nil))
         
       case AssignLoc(effs) =>
-        def assignAnnots(annTp: Type, effs: Map[Location, Locality]) = {
+        def assignAnnots(annTp: Type, effs: Map[SymLoc, Locality]) = {
           (for ((to, from) <- effs) yield {
             val args = location2Arg(to) :: (from match {
               case AnyLoc => List(anyLocArg)

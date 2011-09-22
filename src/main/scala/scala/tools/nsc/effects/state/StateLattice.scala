@@ -88,7 +88,7 @@ abstract class StateLattice extends CompleteLattice {
       
     case (AssignLoc(aEffs), AssignLoc(bEffs)) =>
       
-      val merged = (Map[Location, Locality]() /: aEffs) {
+      val merged = (Map[SymLoc, Locality]() /: aEffs) {
         case (map, (location, aLoc)) =>
           val res = bEffs.get(location).map(joinLocality(aLoc, _)).getOrElse(aLoc)
           map + (location -> res)
@@ -256,7 +256,7 @@ abstract class StateLattice extends CompleteLattice {
    */
   trait Assignment {
     def assignedLocality: Locality
-    def include(to: Location, from: Locality) = this match {
+    def include(to: SymLoc, from: Locality) = this match {
       case AssignAny(to) =>
         AssignAny(joinLocality(to, from))
       case AssignLoc(effs) =>
@@ -279,19 +279,14 @@ abstract class StateLattice extends CompleteLattice {
     def assignedLocality = to
   } 
 
-  /**
-   * Invariant: the keys of the `effs` map can only be SymLoc locations
-   * with local variables - @TODO: change the types accordingly. maybe add
-   * some assertions.
-   */
-  case class AssignLoc(effs: Map[Location, Locality] = Map()) extends Assignment {
-    def this(to: Location, from: Locality) = {
+  case class AssignLoc(effs: Map[SymLoc, Locality] = Map()) extends Assignment {
+    def this(to: SymLoc, from: Locality) = {
       this(Map(to -> from))
     }
 
     def assignedLocality = ((LocSet(): Locality) /: (effs.values))(joinLocality _)
   }
   object AssignLoc {
-    def apply(to: Location, from: Locality) = new AssignLoc(to, from)
+    def apply(to: SymLoc, from: Locality) = new AssignLoc(to, from)
   }
 }

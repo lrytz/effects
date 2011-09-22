@@ -53,27 +53,3 @@ abstract class EffectEnv[L <: CompleteLattice] {
     def applyEffect(eff: Elem): Env
   }
 }
-/*
-class NoEffectEnv[L <: CompleteLattice] extends EffectEnv[L] {
-  import checker.lattice.{Elem, toElemOps}
-
-  type Env = NoEnv.type
-  def empty = NoEnv
-
-  object NoEnv extends EnvImpl {
-    def applyEffect(eff: Elem) = NoEnv
-  }
-  
-  override def seq(op1: Env => Elem, op2: Env => Elem, initEnv: Env): (Elem, Env) = {
-   (op1(NoEnv) u op2(NoEnv), NoEnv)
-  }
-  
-  override def or(op1: Env => Elem, op2: Env => Elem, initEnv: Env): (Elem, Env) = {
-    (op1(NoEnv) u op2(NoEnv), NoEnv)
-  }
-
-  def loop(op: Env => Elem, initEnv: Env): (Elem, Env) = {
-    (op(NoEnv), NoEnv)
-  }
-}
-*/
