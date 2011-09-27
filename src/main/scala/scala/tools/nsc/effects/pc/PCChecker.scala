@@ -11,13 +11,8 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
   override val runsBefore = List("pickler")
   val phaseName = "pcChecker"
 
-/* @DELETE  val pcCommons = new PCCommons {
-    val global: PCChecker.this.global.type = PCChecker.this.global
-  }
-  import pcCommons._ */
-
   val lattice: pcLattice.type = pcLattice
-  import lattice.{PC, AnyPC, PCInfo, ThisLoc, ParamLoc, sameParam, Elem}
+  import lattice.{PC, AnyPC, PCInfo, ThisLoc, ParamLoc, sameParam, Elem, toElemOps}
   
   val annotationClasses = List(pcClass, anyPcClass)
 
@@ -88,7 +83,7 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
         for (pcInfo @ PCInfo(param, pcfun) <- calls) {
           if (isParamCall(pcInfo, ctx)) {
             // 1. the annotated param call is still a param call in the current method
-            res = lattice.join(res, PC(PCInfo(param, pcfun)))
+            res = res u PC(PCInfo(param, pcfun))
           } else {
             
             val paramTree = param match {
@@ -111,11 +106,11 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
               case id @ Ident(_) =>
                 val pcInfo = PCInfo(ParamLoc(id.symbol), pcfun)
                 if (isParamCall(pcInfo, ctx))
-                  res = lattice.join(res, PC(pcInfo))
+                  res = res u PC(pcInfo)
               case th @ This(_) =>
                 val pcInfo = PCInfo(ThisLoc(th.symbol), pcfun)
                 if (isParamCall(pcInfo, ctx))
-                  res = lattice.join(res, PC(pcInfo))
+                  res = res u  PC(pcInfo)
               case _ => ()
             }
           }
@@ -129,16 +124,16 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
       case Select(id @ Ident(_), _) =>
         val pcInfo = PCInfo(ParamLoc(id.symbol), Some(funSym))
         if (isParamCall(pcInfo, ctx))
-          res = lattice.join(res, PC(pcInfo))
+          res = res u PC(pcInfo)
 
       case Select(th @ This(_), _) =>
         val pcInfo = PCInfo(ThisLoc(th.symbol), Some(funSym))
         if (isParamCall(pcInfo, ctx))
-          res = lattice.join(res, PC(pcInfo))
+          res = res u PC(pcInfo)
       case _ =>
         ()
     }
-    res
+    (res, Nil)
   }
 
   /**

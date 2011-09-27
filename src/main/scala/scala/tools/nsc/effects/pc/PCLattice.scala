@@ -23,7 +23,7 @@ abstract class PCLattice extends CompleteLattice {
           
           // include `bCall` into `res`. First find `existing` paramCalls in res that have the same param
           
-          val (existing, others) = res.partition(aCall => sameParam(aCall.param, bCall.param))
+          val (existing, others) = res.partition(aCall => aCall.param == bCall.param)
           if (existing.isEmpty) {
             res = bCall :: others
           } else {
@@ -60,7 +60,7 @@ abstract class PCLattice extends CompleteLattice {
    *  - the functions have to be the same, or b covers all functions
    */
   def lteInfo(a: PCInfo, b: PCInfo) = {
-    sameParam(a.param, b.param) && (a.fun == b.fun || b.fun.isEmpty)
+    a.param == b.param && (a.fun == b.fun || b.fun.isEmpty)
   }
 
   sealed trait PCLoc {
@@ -70,7 +70,13 @@ abstract class PCLattice extends CompleteLattice {
     }
   }
   case class ThisLoc(cls: Symbol) extends PCLoc
-  case class ParamLoc(param: Symbol) extends PCLoc
+  case class ParamLoc(param: Symbol) extends PCLoc {
+    override def hashCode() = param.hashCode()
+    override def equals(other: Any) = other match {
+      case ParamLoc(otherParam) => sameParam(param, otherParam)
+      case _ => false
+    }
+  }
   
   /**
    * Represents one parameter call annotation. If `fun` is None, the
@@ -89,12 +95,6 @@ abstract class PCLattice extends CompleteLattice {
   }
   case object AnyPC extends PCElem
 
-  def sameParam(a: PCLoc, b: PCLoc): Boolean = (a, b) match {
-    case (ThisLoc(aCls), ThisLoc(bCls)) => aCls == bCls
-    case (ParamLoc(ap), ParamLoc(bp)) => sameParam(ap, bp)
-    case _ => false
-  }
-  
   /**
    * True if `a` and `b` denote the same parameter.
    * 

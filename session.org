@@ -4,10 +4,57 @@ import annotation.effects._
 import annotation.effects.pc._
 import annotation.effects.state._
 
-abstract class A { def f(): Unit @pure }
+class B
+trait A {
+  def store(b: B): Unit @store(this, b)
+}
+
+def foo(a: A, b: B): Unit @infer = a.store(b)
+
+def foo(a: A, b1: B, b2: B): B @infer = {
+  var x = b1
+  def inner() = { a.store(x); x = b2 }
+  inner()
+  x
+}
+
+
+def foo(a: A, b1: B, b2: B): B @infer = {
+  var x = b1
+  def inner() = { a.store(x); x = b2 }
+  x
+}
+
+
+def foo(a: A, b1: B, b2: B): B @infer = {
+  var x = b1
+  def inner() { x = b2; a.store(x)}
+  inner()
+  x
+}
 
 
 * Bugs, Todos
+
+** sameParam
+
+check uses of sameParam. if it's on ParamLoc (of PCLattice) or SymLoc (of StateLattice), it's not needed, they override equals.
+
+
+** local variables, envs
+
+replacing local variables with their locality in effects:
+
+   def foo(a: A, b: B, c: C) {
+     var x = b
+     def inner(): Unit @store(a, x) @assign(x, c) { a.store(x); x = c }
+     inner()
+   }
+
+The effect of the application `inner()` is `@store(a, b) @assign(x, c)`, i.e.
+the `x` in the store effect needs to be replaced!
+
+
 
 ** State effects and refined types
 
@@ -57,13 +104,42 @@ class D extends C { override def f: Int @infer = 2 }
 
 * Tests to integrate
 
+** state effects depend on order
+
+import annotation.effects._
+import annotation.effects.pc._
+import annotation.effects.state._
+
+@loc class D { }
+
+@loc class C {
+  @local var d: D = new D
+}
+
+def f(c: C, d: D): Unit @mod(c) = {
+  c.d = new D
+}
+
+def f(c: C, d: D): Unit @store(c, d) @mod(c) = { // OK
+  c.d = new D
+  c.d = d
+}
+
+
+def f(c: C, d: D): Unit @store(c, d) @mod(c) = { // effect does not conform
+  c.d = d
+  c.d = new D
+}
+
+
+
 ** PC on this
 
 import annotation.effects._
 import annotation.effects.pc._
 import annotation.effects.state._
 
-@pure abstract class C {
+@loc abstract class C {
   def foo(): Unit @mod(this)
   def bar(): Unit @pc(this.foo()) @pure = foo()
 }

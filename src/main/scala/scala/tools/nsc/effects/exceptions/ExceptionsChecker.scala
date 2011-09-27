@@ -67,24 +67,8 @@ class ExceptionsChecker(val global: Global) extends EffectChecker[ExceptionsLatt
   
   override def newEffectTraverser(tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit): EffectTraverser =
     new ExceptionsTraverser(tree, typer, owner, unit)
-  
-  /**
-   * A method which computes the effect of a Tree. Note that this doesn't exist in the superclass
-   * (EffectChecker), there `computeEffect` can only be called on the `body` of a definition.
-   * The reason: the effect traverser expects a tree that went through "refine", see comment in
-   * `EffectChecker.computeEffect`.
-   * 
-   * However, the way we use the method here is fine; we only call it witin the `ExceptionsTraverser`
-   * on a sub-tree of tree currently being traversed, and that outer tree went through `refine`
-   * before getting into the traverser.
-   */
-  def subtreeEffect(tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit): Elem = {
-    newEffectTraverser(tree, typer, owner, unit).compute()
-  }
 
   class ExceptionsTraverser(tree: Tree, typer: Typer, owner: Symbol, unit: CompilationUnit) extends EffectTraverser(tree, typer, owner, unit) {
-    def subtreeEffect(tree: Tree) = ExceptionsChecker.this.subtreeEffect(tree, typer, owner, unit)
-    
     override def traverse(tree: Tree) {
       tree match {
         case Throw(expr) =>

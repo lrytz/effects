@@ -61,10 +61,9 @@ trait TravLk[+A, +Repr] { self: Repr =>
     b.result() // b is local => can mask @mod(b), because @fresh(b)
   }
 
-  def map[B, That](f: A => B)(implicit bf: CBF[Repr, B, That]): That @pc(f.apply(x)) forSome {val x: A} = {
-    // @TODO: cast due to intellij bug (youtrack.jetbrains.net/issue/SCL-2480)
-    val b = bf(self.asInstanceOf[Repr]) // @fresh(b) @pure (bf.apply is pure)
-    for (x <- this) b += f(x) // @mod(b) @pc(f.apply(_))
+  def map[B, That](f: A => B)(implicit bf: CBF[Repr, B, That]): That @pc(f.apply(%)) = {
+    val b = bf(self) // @fresh(b) @pure (bf.apply is pure)
+    for (x <- this) b += f(x) // @mod(b) @pc(f.apply(%))
     b.result() // @fresh(b) => mask @mod(b)
   }
 }

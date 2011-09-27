@@ -7,6 +7,8 @@ import collection.immutable.{Set, Map}
 abstract class StateLattice extends CompleteLattice {
   val global: Global
   import global._
+  import analyzer.Context
+
 
   type Elem = (Store, Assignment, Locality)
 
@@ -19,38 +21,18 @@ abstract class StateLattice extends CompleteLattice {
 
   override val pure: Elem = (StoreLoc(), AssignLoc(), AnyLoc)
   
+  override implicit def toElemOps(eff: Elem) = new StateElemOps(eff)
+
+  class StateElemOps(eff: Elem) extends ElemOps(eff) {
+    def updateLocality(loc: Locality) = StateLattice.this.updateLocality(eff, loc)
+  }
+  
   /**
    * Construct effect elements form effects in one domain.
    */
-  def mkElem(store: Store): Elem = (store, AssignLoc(), LocSet())
-  def mkElem(assign: Assignment): Elem = (StoreLoc(), assign, LocSet())
-  def mkElem(loc: Locality): Elem = (StoreLoc(), AssignLoc(), loc)
-
-  /**
-   * Join effects, e.g. in
-   * 
-   *   if (..) { x = a } else { if (..) x = b }
-   *   
-   * the resulting effect is @weakAssign(x, {a, b})
-   */
-  def join(a: Elem, b: Elem) =
-    (joinStore(a._1, b._1), joinAssignment(a._2, b._2), joinLocality(a._3, b._3))
-
-  /**
-   * Sequence effects. For instance, in a block
-   *   {
-   *     x = a
-   *     if (..) x = b
-   *   }
-   *
-   * The effect is @strongAssign(x, {a, b})
-   * 
-   * @TODO: sequencing is probably more complicated, it needs the current environment!!!
-   * When the first effect assigns a variable, the second modifies it, then the env
-   * matters. or is this handled whenever sequence is used?
-   */
-  def sequence(a: Elem, b: Elem) =
-    (joinStore(a._1, b._1), sequenceAssignment(a._2, b._2), b._3)
+  def mkElem(store: Store): Elem       = (store,      AssignLoc(), LocSet())
+  def mkElem(assign: Assignment): Elem = (StoreLoc(), assign,      LocSet())
+  def mkElem(loc: Locality): Elem      = (StoreLoc(), AssignLoc(), loc)
 
   /**
    * Change the returned locality of an effect, while making sure
@@ -58,7 +40,9 @@ abstract class StateLattice extends CompleteLattice {
    * a fresh value can only be returned by methods that don't have
    * any side-effects.
    * 
-   * @TOOD: compare the implamentation of this method with the notes on paper.
+   * @TOOD: double-check this. is it correct?
+   * also, in some cases we put the location to AnyLoc; is it only
+   * here that we have to do so? or also in some places in the checker?
    */
   def updateLocality(eff: Elem, loc: Locality) = {
     if (loc.isFresh) {
@@ -67,11 +51,23 @@ abstract class StateLattice extends CompleteLattice {
       else if (eff._3.isFresh)
         (eff._1, eff._2, AnyLoc)
       else
-        eff // param locations are ok to be mixed with effects (right?)
+        eff
+    } else if (eff._1 == StoreAny) {
+      (eff._1, eff._2, AnyLoc)
     } else {
-      eff
+      (eff._1, eff._2, loc)
     }
   }
+
+  /**
+   * Join effects, e.g. in
+   * 
+   *   if (..) { x = a } else { if (..) x = b }
+   *   
+   * the resulting effect is @assign(x, {a, b})
+   */
+  def join(a: Elem, b: Elem) =
+    (joinStore(a._1, b._1), joinAssignment(a._2, b._2), joinLocality(a._3, b._3))
 
   def joinStore(a: Store, b: Store): Store = (a, b) match {
     case (StoreAny, _) | (_, StoreAny) =>
@@ -87,10 +83,6 @@ abstract class StateLattice extends CompleteLattice {
       StoreLoc(merged ++ onlyInB)
   }
 
-
-  /**
-   * Joining a strong and a weak assignment results in a weak assigment.
-   */
   def joinAssignment(a: Assignment, b: Assignment): Assignment = (a, b) match {
     case (AssignAny(as), b) =>
       AssignAny(joinLocality(as, b.assignedLocality))
@@ -98,94 +90,16 @@ abstract class StateLattice extends CompleteLattice {
     case (a, AssignAny(bs)) =>
       AssignAny(joinLocality(a.assignedLocality, bs))
       
-    case (AssignLoc(aStrong, aWeak), AssignLoc(bStrong, bWeak)) =>
-      /* aStrong, aWeak, bStrong, bWeak: Map[Location, Locality]
-       * 
-       * Example: given
-       *   a: AssignLoc(strong(x -> {a}),                     weak(y -> {b}))
-       *   b: AssignLoc(strong(x -> {c}, y -> {d}, z -> {e}), weak(v -> {f}))
-       *   
-       *  - x is strong in both            => strong in the result, merge localities
-       *  - y is weak in a                 => weak in the result, merge localities
-       *  - z (strong) does not exist in a => weak in the result
-       *  - v (weak) does not exist in a   => weak in the result
-       *
-       *  ==> AssignLoc(strong(x -> {a, c}), weak(y -> {b, d}, z -> {e}, v -> {f}))
-       */
+    case (AssignLoc(aEffs), AssignLoc(bEffs)) =>
       
-      val (strong, aBecomeWeak) = ((Map[Location, Locality](), Map[Location, Locality]()) /: aStrong) {
-        case ((strong, weak), (location, aLoc)) =>
-          bStrong.get(location) match {
-            case Some(bLoc) => (strong + (location -> joinLocality(aLoc, bLoc)), weak)
-            case None => (strong, weak + (location -> aLoc))
-          }          
-      }
-
-      val aAllWeak = aWeak ++ aBecomeWeak
-      val bAllWeak = bWeak ++ bStrong.filterNot(elem => strong.contains(elem._1))
-      
-      val mergedWeak = (Map[Location, Locality]() /: aAllWeak) {
+      val merged = (Map[SymLoc, Locality]() /: aEffs) {
         case (map, (location, aLoc)) =>
-          val res = bAllWeak.get(location).map(joinLocality(aLoc, _)).getOrElse(aLoc)
+          val res = bEffs.get(location).map(joinLocality(aLoc, _)).getOrElse(aLoc)
           map + (location -> res)
       }
-      
-      val weak = mergedWeak ++ bAllWeak.filterNot(elem => mergedWeak.contains(elem._1))
-      
-      AssignLoc(strong, weak)
+      val res = merged ++ bEffs.filterNot(elem => merged.contains(elem._1))
+      AssignLoc(res)
   }
-  
-  def sequenceAssignment(a: Assignment, b: Assignment): Assignment = (a, b) match {
-    case (AssignAny(as), b) =>
-      AssignAny(joinLocality(as, b.assignedLocality))
-      
-    case (a, AssignAny(bs)) =>
-      AssignAny(joinLocality(a.assignedLocality, bs))
-
-    case (AssignLoc(aStrong, aWeak), AssignLoc(bStrong, bWeak)) =>
-      /* aStrong, aWeak, bStrong, bWeak: Map[Location, Locality]
-       *
-       * For each location:
-       * 
-       *   s = strong write
-       *   w = weak write
-       *   _ = no assign effect for that location
-       * 
-       *   | a | b || result               |
-       *   +---+---++----------------------+
-       *   | * | s || s with locality in b |
-       *   | s | w || s, merge localities  | (1)
-       *   | w | w || w, merge localities  | (2)
-       *   | _ | w || w with locality in b | (3)
-       *   | * | _ || as a                 | (1), (2)
-       */
-      
-      val aStrongVisible = aStrong.filterNot(elem => bStrong.contains(elem._1))
-      val aWeakVisible = aWeak.filterNot(elem => bStrong.contains(elem._1))
-      
-      // (1)
-      val aStrongMerged = (Map[Location, Locality]() /: aStrongVisible) {
-        case (map, (location, aLoc)) =>
-          val res = bWeak.get(location).map(joinLocality(aLoc, _)).getOrElse(aLoc)
-          map + (location -> res)
-      }
-      
-      // (2)
-      val aWeakMerged = (Map[Location, Locality]() /: aWeakVisible) {
-        case (map, (location, aLoc)) =>
-          val res = bWeak.get(location).map(joinLocality(aLoc, _)).getOrElse(aLoc)
-          map + (location -> res)
-      }
-      
-      // (3)
-      val bWeakOnly = bWeak.filterNot(elem => aStrongMerged.contains(elem._1) || aWeakMerged.contains(elem._1))
-
-      val strong = bStrong ++ aStrongMerged
-      val weak = aWeakMerged ++ bWeakOnly
-      
-      AssignLoc(strong, weak)
-  }
-
 
   def joinLocality(a: Locality, b: Locality): Locality = (a, b) match {
     case (AnyLoc, _) | (_, AnyLoc) =>
@@ -211,20 +125,13 @@ abstract class StateLattice extends CompleteLattice {
       })
   }
   
-  // strong update is smaller than weak update
   def lteAssignment(a: Assignment, b: Assignment) = (a, b) match {
     case (a, AssignAny(bs)) => lteLocality(a.assignedLocality, bs)
     case (AssignAny(as), b) => false
-    case (AssignLoc(aStrong, aWeak), AssignLoc(bStrong, bWeak)) =>
-      aStrong.forall({
+    case (AssignLoc(aEffs), AssignLoc(bEffs)) =>
+      aEffs.forall({
         case (location, aLoc) =>
-          bStrong.get(location).map(bLoc => lteLocality(aLoc, bLoc)).getOrElse({
-            bWeak.get(location).map(bLoc => lteLocality(aLoc, bLoc)).getOrElse(false)
-          })
-      }) &&
-      aWeak.forall({
-        case (location, aLoc) =>
-          bWeak.get(location).map(bLoc => lteLocality(aLoc, bLoc)).getOrElse(false)
+          bEffs.get(location).map(bLoc => lteLocality(aLoc, bLoc)).getOrElse(false)
       })
   }
   
@@ -245,23 +152,23 @@ abstract class StateLattice extends CompleteLattice {
         s.isEmpty || s.toList == List(Fresh)
       case _ => false
     }
+    
+    def filterOutOfScope(ctx: Context): Locality
   }
-  case object AnyLoc extends Locality
+  case object AnyLoc extends Locality {
+    def filterOutOfScope(ctx: Context) = AnyLoc
+  }
   case class LocSet(s: Set[Location] = Set()) extends Locality {
     def this(l: Location) = this(Set(l))
     
     def union(b: LocSet) = LocSet(s union b.s)
-/*
-    def diff(b: LocSet) = LocSet(s diff b.s)
-    def intersect(b: LocSet) = LocSet(s intersect b.s)
-*/
+    def add(loc: Location) = LocSet(s + loc)
+    
+    def filterOutOfScope(ctx: Context) = LocSet(s.filter(_.isInScope(ctx)))
   }
   object LocSet {
     def apply(l: Location): LocSet = new LocSet(l)
   }
-
-  // will maybe be useful
-  /* implicit def set2LocSet(s: Set[Location]) = new LocSet(s) */
   
   /**
    * Locations, places that are subject to modification effects.
@@ -272,11 +179,55 @@ abstract class StateLattice extends CompleteLattice {
       case ThisLoc(_) => false
       case Fresh => false
     }
+    
+    /**
+     * Note the difference for parameters and local values / variables:
+     *  - a local variable defined in a method is out of scope outside that method
+     *  - however, parameters also have the method as owner, but they are still in
+     *    scope outside the method.
+     */
+    def isInScope(ctx: Context): Boolean = this match {
+      case Fresh => true
+      case ThisLoc(_) => true
+      case SymLoc(sym) =>
+        if (sym.isParameter)
+          localIsInScope(sym, ctx)
+        else
+          localIsInScope(sym, ctx.outer)
+    }
   }
-  case class SymLoc(sym: Symbol) extends Location
+  case class SymLoc(sym: Symbol) extends Location {
+    override def hashCode() = sym.hashCode
+    override def equals(other: Any) = other match {
+      case SymLoc(otherSym) => sym.owner == otherSym.owner && sym.name == otherSym.name
+      case _ => false
+    }
+  }
   case class ThisLoc(sym: Symbol) extends Location
   case object Fresh extends Location
   
+  
+  /**
+   * Is the local value / variable or paramter `local` in scope with
+   * respect to context `ctx`?
+   *
+   * This is checked by looking at the owner of `ctx` and all owner
+   * symbols of its `outer` contexts. If any of these symbols is the
+   * same as the owner of `local`, then that local value is in scope
+   * with respect to that context.
+   * 
+   * Note that this only works correctly for local values / variables
+   * and parameters. Inherited fields can be in scope while only a
+   * subclass is in the context chain, not the actual owner of the field.
+   */
+  def localIsInScope(local: Symbol, ctx: Context): Boolean = {
+    def contextHasOwner(ctx: Context, owner: Symbol): Boolean = {
+      ctx.owner == owner || (ctx.outer != ctx && contextHasOwner(ctx.outer, owner))
+    }
+    contextHasOwner(ctx, local.owner)
+  }
+
+
 
   /**
    * State modifications
@@ -289,8 +240,6 @@ abstract class StateLattice extends CompleteLattice {
       case StoreLoc(effs) => from match {
         case AnyLoc => StoreAny
         case locs @ LocSet(_) =>
-/*          val res = effs.updated(in, effs.get(in).map(locs.union).getOrElse(locs))
-          StoreLoc(res)*/
           StoreLoc(extendStoreMap(effs, in, locs))
       }
     }
@@ -300,6 +249,7 @@ abstract class StateLattice extends CompleteLattice {
         effs.toList match {
           case Nil => true
           case List((in, from)) => in == Fresh && from.isFresh
+          case _ => false
         }
       case _ => false
     }
@@ -320,22 +270,17 @@ abstract class StateLattice extends CompleteLattice {
    */
   trait Assignment {
     def assignedLocality: Locality
-    def include(to: Location, from: Locality, useStrong: Boolean) = this match {
+    def include(to: SymLoc, from: Locality) = this match {
       case AssignAny(to) =>
         AssignAny(joinLocality(to, from))
-      case AssignLoc(strong, weak) =>
-        val m = if (useStrong) strong else weak
-        val res = m.updated(to, m.get(to).map(joinLocality(from, _)).getOrElse(from))
-        if (useStrong) AssignLoc(res, weak) else AssignLoc(strong, res)
+      case AssignLoc(effs) =>
+        val res = effs.updated(to, effs.get(to).map(joinLocality(from, _)).getOrElse(from))
+        AssignLoc(res)
     }
     
     def isPure = this match {
-      case AssignLoc(strong, weak) =>
-        (strong.toList match {
-          case Nil => true
-          case List((loc, from)) => loc == Fresh && from.isFresh
-          case _ => false
-        }) && (weak.toList match {
+      case AssignLoc(effs) =>
+        (effs.toList match {
           case Nil => true
           case List((loc, from)) => loc == Fresh && from.isFresh
           case _ => false
@@ -346,15 +291,16 @@ abstract class StateLattice extends CompleteLattice {
   }
   case class AssignAny(to: Locality) extends Assignment {
     def assignedLocality = to
-  }
-  case class AssignLoc(strong: Map[Location, Locality] = Map(), weak: Map[Location, Locality] = Map()) extends Assignment {
-    def this(to: Location, from: Locality, useStrong: Boolean) = {
-      this(if (useStrong) Map(to -> from) else Map(), if (useStrong) Map() else Map(to -> from))
+  } 
+
+  case class AssignLoc(effs: Map[SymLoc, Locality] = Map()) extends Assignment {
+    def this(to: SymLoc, from: Locality) = {
+      this(Map(to -> from))
     }
 
-    def assignedLocality = ((LocSet(): Locality) /: (strong.values ++ weak.values))(joinLocality _)
+    def assignedLocality = ((LocSet(): Locality) /: (effs.values))(joinLocality _)
   }
   object AssignLoc {
-    def apply(to: Location, from: Locality, useStrong: Boolean) = new AssignLoc(to, from, useStrong)
+    def apply(to: SymLoc, from: Locality) = new AssignLoc(to, from)
   }
 }

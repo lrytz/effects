@@ -56,7 +56,7 @@ class store(in: Any, from: Any*) extends Effect
  *
  * def f: C @loc(this) = {
  *   var c = someGlobalC
- *   def g(): Unit @assignStrong(c, this) { c = this.c }
+ *   def g(): Unit assign(c, this) { c = this.c }
  *   g()
  *   c
  * }
@@ -65,7 +65,7 @@ class store(in: Any, from: Any*) extends Effect
  * cannot re-assign any outer variables: assigning a field (o.f = x)
  * has effect @mod(o) (or, @store(o, x)).
  *
- * Purity:                   @assign(fresh)
+ * Purity:                   @assign(fresh) == @assign()
  * Assign a fresh value:     @assign(l) == @assign(l, fresh)
  * Unknown target:           @assign(l, any)
  * Assign any variable to l: @assign(any, l)
@@ -75,7 +75,6 @@ class store(in: Any, from: Any*) extends Effect
  * on the control flow of the method.
  */
 class assign(to: Any, from: Any*) extends Effect
-class assignStrong(to: Any, from: Any*) extends Effect
 
 /**
  * The effect `@loc(l)` denotes the locality of the returned value.
