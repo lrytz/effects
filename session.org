@@ -36,6 +36,13 @@ def foo(a: A, b1: B, b2: B): B @infer = {
 
 * Bugs, Todos
 
+** By-name params
+functions with by-name params should (probably) always be be effect polymorphic.
+
+ def f(a: => Int): Int @pc(a) = a
+
+
+
 ** sameParam
 
 check uses of sameParam. if it's on ParamLoc (of PCLattice) or SymLoc (of StateLattice), it's not needed, they override equals.

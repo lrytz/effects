@@ -257,6 +257,9 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
       val funSym = fun.symbol
       val ctx = rhsTyper.context1
       
+      if (funSym.name.toString == "foreach") // @DEBUG
+        println()
+      
       val funRes = qualEffect(fun, env)
       val qualLoc = funRes.eff._3
       
@@ -443,10 +446,17 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
   /**
    * Is the symbol `sym` defined in an enclosing method?
    * For each enclosing method, we check if the symbol is defined in it.
+   * 
+   * 
+   * @TODO: (!) below, for some reason, the context of an anonymous function does
+   * not have `enclMethod` set correctly. In
+   *    this.foreach(x => result = false)  // isEmpty from collection TravLk
+   * the context of the anonymous function has NoContext as enclMethod. I guess this
+   * is a bug in the way contexts are created? Anyway, we use `outer` for now...
    */
   def definedInEnclMethod(sym: Symbol, rhsCtx: Context): Boolean = {
     if (rhsCtx.outer == rhsCtx) false
-    else hasOwner(sym, rhsCtx.owner) || definedInEnclMethod(sym, rhsCtx.enclMethod)
+    else hasOwner(sym, rhsCtx.owner) || definedInEnclMethod(sym, rhsCtx.outer /*rhsCtx.enclMethod (!)*/)
   }
   
   /**

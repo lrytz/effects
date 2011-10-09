@@ -381,7 +381,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
         // the skolemized symbol, while in sym.tpe we have the non-skolemized ones.
         val rhsTp = sym.tpe match {
           case PolyType(tparams @ (tp :: _), _) if tp.owner.isTerm =>
-            new analyzer.DeSkolemizeMap(tparams) mapOver rhs1.tpe
+            new analyzer.DeSkolemizeMap(tparams) apply rhs1.tpe
           case _ =>
             rhs1.tpe
         }
@@ -395,13 +395,15 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       for (os <- sym.allOverriddenSymbols) {
         // similar as in RefChecks.
         val classType = owner.thisType
-        val symTp = classType.memberType(sym).finalResultType
-        val osTp = classType.memberType(os).finalResultType
+        val symTp = classType.memberType(sym)
+        val symResTp = symTp.finalResultType
+        val osTp = classType.memberType(os)
+        val osResTp = osTp.finalResultType.substSym(osTp.typeParams, symTp.typeParams)
         // @TODO: lattice.top (nonAnnotatedEffect) when overridden does not have an effect annotation? more conservative would be lattice.bottom.
-        val overriddenEffect = fromAnnotation(osTp).orElse(lookupExternal(os)).getOrElse(nonAnnotatedEffect(Some(os)))
+        val overriddenEffect = fromAnnotation(osResTp).orElse(lookupExternal(os)).getOrElse(nonAnnotatedEffect(Some(os)))
         if (!(symEff <= overriddenEffect))
           overrideError(dd, os, overriddenEffect, symEff)
-        checkRefinement(dd, symTp, osTp)
+        checkRefinement(dd, symResTp, osResTp)
       }
     }
 
@@ -458,6 +460,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     val (tp1a, tp2a) = (removeEffectAnnotations(tp1), removeEffectAnnotations(tp2))
     if (!annotationChecker.localInferMode(tp1a <:< tp2a)) {
       refinementError(tree, tp2a, tp1a)
+      annotationChecker.localInferMode(tp1a <:< tp2a) // @DEBUG
     }
   }
 
@@ -587,12 +590,11 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     }
 
     override def transform(tree: Tree): Tree = tree match {
-      /* already skipped by `transformStats`
       case ClassDef(_, _, _, _)     => tree
       case ModuleDef(_, _, _)       => tree
       case DefDef(_, _, _, _, _, _) => tree
       case ValDef(_, _, _, _)       => tree
-      */
+      case TypeDef(_, _, _, _)      => tree
       
       /**
        * Like the type of a `Select` node can change (select something whose type changes),
@@ -659,7 +661,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
      * @TODO: sure that's correct? what if a statement refers to a symbol whose type
      * is being refined, then that should be updated before computing the effect, no?
      */
-    override def transformStats(stats: List[Tree], owner: Symbol): List[Tree] = stats
+    // override def transformStats(stats: List[Tree], owner: Symbol): List[Tree] = stats
 
     /**
      * A Transformer that removes types and symbols on the path to the tree `stop`.

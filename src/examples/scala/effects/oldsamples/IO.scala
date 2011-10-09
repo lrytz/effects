@@ -1,4 +1,4 @@
-package effects
+package oldsamples.effects
 
 import java.io.IOException
 
@@ -29,8 +29,6 @@ object Combine {
     } catch {
       case e: IOException => None
     }
-
-
 
 }
 

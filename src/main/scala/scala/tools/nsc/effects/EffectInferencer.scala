@@ -188,6 +188,8 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
 
   // documented above, on class EffectInferencer
   def newTransformer(unit: CompilationUnit) = new TypingTransformer(unit) {
+    var selfSyms = Set[Symbol]()
+
     override def transform(tree: Tree): Tree = {
       val sym = tree.symbol
 
@@ -204,6 +206,9 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
 
         case DefDef(_, _, _, _, _, _) if sym.isSetter =>
           () // handled above (for abstract fields) or in `case ValDef` below
+          
+        case Template(_, self, _) =>
+          selfSyms += self.symbol
 
         case ModuleDef(_, _, impl) =>
           inferPrimConstr(sym, None, impl)
@@ -294,7 +299,7 @@ abstract class EffectInferencer[L <: CompleteLattice] extends PluginComponent wi
 
           // Abstract field definitions are represented in trees as abstract accessors, i.e. getter and, if mutable, setter
           // however, for class parameters, there will still be a ValDef without rhs owned by a class.
-          assert(!rhs.isEmpty || !sym.owner.isClass || sym.isParamAccessor, "field valdef with empty rhs: "+ tree)
+          assert(!rhs.isEmpty || !sym.owner.isClass || sym.isParamAccessor || selfSyms(sym), "field valdef with empty rhs: "+ tree)
 
           // for parameters, `tt.wasEmpty` is always false.
           if (inferRefinement(sym, tt.wasEmpty)) {

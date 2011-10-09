@@ -29,9 +29,13 @@ abstract class StateLattice extends CompleteLattice {
   
   /**
    * Construct effect elements form effects in one domain.
+   * 
+   * Uses `updateLocality` to not crate inconsistent effects: fresh
+   * locality is only allowed if there is no store effect, see implementation
+   * of `updateLocality`.
    */
-  def mkElem(store: Store): Elem       = (store,      AssignLoc(), LocSet())
-  def mkElem(assign: Assignment): Elem = (StoreLoc(), assign,      LocSet())
+  def mkElem(store: Store): Elem       = (store,      AssignLoc(), AnyLoc).updateLocality(LocSet())
+  def mkElem(assign: Assignment): Elem = (StoreLoc(), assign,      AnyLoc).updateLocality(LocSet())
   def mkElem(loc: Locality): Elem      = (StoreLoc(), AssignLoc(), loc)
 
   /**

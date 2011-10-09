@@ -1,4 +1,4 @@
-package effects
+package oldsamples.effects
 
 
 // effect annotations

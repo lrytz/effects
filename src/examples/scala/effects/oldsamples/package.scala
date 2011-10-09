@@ -1,3 +1,5 @@
+package oldsamples
+
 package object effects {
   def % : Nothing = throw new Error("% should never be called")
 

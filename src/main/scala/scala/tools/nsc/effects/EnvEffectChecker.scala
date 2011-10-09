@@ -57,7 +57,9 @@ abstract class EnvEffectChecker[L <: CompleteLattice] extends EffectChecker[L] {
      * Computes the effect of a subtree of `rhs`.
      */
     def subtreeEffect(tree: Tree, env: Env): Elem = {
-      newEnvEffectTraverser(tree, env, rhsTyper, sym, unit).compute()
+      val res = newEnvEffectTraverser(tree, env, rhsTyper, sym, unit).compute()
+      // println("  effect of: " + tree +" = "+ res) // @DEBUG
+      res
     }
     
     case class Res(eff: Elem, env: Env, parts: List[Elem])
