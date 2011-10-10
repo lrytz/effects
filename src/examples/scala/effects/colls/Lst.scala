@@ -180,14 +180,14 @@ object Sq extends SqFct[Sq] {
 
 
 
-sealed abstract class Lst[+A] extends Sq[A] with GenTravTmpl[A, Lst] with SqLk[A, Lst[A]] {
+@loc() sealed abstract class Lst[+A] extends Sq[A] with GenTravTmpl[A, Lst] with SqLk[A, Lst[A]] {
   def apply(idx: Int): A @pure @throws[NoSuchElementException | UnsupportedOperationException] = if (idx == 0) head else tail(idx - 1)
   def length: Int @pure = if (isEmpty) 0 else 1+tail.length
   override def companion: GenCpn[Lst] @pure = Lst
 }
 
 // @TODO: overriding a "def" using a "val" => makes it pure. do we need to annotate that?
-final case class cns[A](override val head: A, override val tail: Lst[A]) extends Lst[A] {
+@loc() final case class cns[A](override val head: A, override val tail: Lst[A]) extends Lst[A] {
   override def isEmpty: Boolean @pure = false
 }
 
@@ -196,18 +196,21 @@ case object nl extends Lst[Nothing] {
 }
 
 @loc() class LstBldr[A] extends Bldr[A, Lst[A]] {
-  @local val b = new collection.mutable.ListBuffer[A]()
+  // @local val b = new collection.mutable.ListBuffer[A]() @TODO
+  var b: Lst[A] = nl
   def +=(a: A): this.type @pure @mod(this) = {
-    b += a // @mod(this); need to know that ListBuffer.+= has effect @mod(this)
+    // b += a // @mod(this); need to know that ListBuffer.+= has effect @mod(this)
+    b = new cns(a, b)
     this
   }
-  def result(): Lst[A] @pure = Lst(b: _*)
+  def result(): Lst[A] @pure = b // Lst(b: _*)
 }
 
 object Lst extends SqFct[Lst] {
-  def apply[A](elems: A*): Lst[A] @pure = {
-    elems.foldRight(nl: Lst[A])((a, res) => cns(a, res))
-  }
+  // @TODO
+  // def apply[A](elems: A*): Lst[A] @pure = {
+    // elems.foldRight(nl: Lst[A])((a, res) => cns(a, res))
+  // }
   def newBuilder[A]: Bldr[A, Lst[A]] @pure @loc() = new LstBldr[A]
   override def empty[A]: Lst[A] @pure = nl
 }

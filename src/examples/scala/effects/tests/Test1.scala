@@ -4,5 +4,6 @@ import annotation.effects._
 
 
 class Test1 {
-  def foo(x: Int): Int @pure = x + 1
+  var x = 1
+  def foo(): Unit @pure = { x = 2 }
 }
