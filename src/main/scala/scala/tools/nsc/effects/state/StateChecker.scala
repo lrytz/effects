@@ -101,7 +101,8 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
     val maskedLoc = e._3.filterOutOfScope(ctx)
 
     val res = (maskedStore, maskedAssign, maskedLoc)
-    if (res != e) { println("masking effecs:\n  from: "+ e +"\n  to  : "+ res) } // @DEBUG
+    if (settings.debug.value && res != e) // @DEBUG
+      println("masking effecs:\n  from: "+ e +"\n  to  : "+ res)
     res
   }
   
@@ -257,7 +258,7 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
       val funSym = fun.symbol
       val ctx = rhsTyper.context1
       
-      if (funSym.name.toString == "foreach") // @DEBUG
+      if (settings.debug.value && funSym.name.toString == "while$1") // @DEBUG
         println()
       
       val funRes = qualEffect(fun, env)
@@ -473,7 +474,8 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
     } else {
       AnyLoc
     }
-    println("locality of selected "+ sym +" is "+ res) // @DEBUG
+    if (settings.debug.value) // @DEBUG
+      println("locality of selected "+ sym +" is "+ res)
     res
   }
 }

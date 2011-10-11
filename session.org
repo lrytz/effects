@@ -1,5 +1,18 @@
 * Session
 
+
+
+class K[T]
+def f[A]: K[A] = {
+  class I extends K[A]
+  new I
+}
+
+
+
+
+
+
 import annotation.effects._
 import annotation.effects.pc._
 import annotation.effects.state._
@@ -36,11 +49,34 @@ def foo(a: A, b1: B, b2: B): B @infer = {
 
 * Bugs, Todos
 
-** By-name params
-functions with by-name params should (probably) always be be effect polymorphic.
+** refine annotation is propagated
 
- def f(a: => Int): Int @pc(a) = a
+def f = { val foo: C @refine = new C { def f(): Unit @pure = () } ; val x: C @refine = foo ; x }
+f: (C){def f(): Unit @scala.annotation.effects.pure} @scala.annotation.effects.state.mod(state.this.any) @scala.annotation.effects.refine @scala.annotation.effects.refine @scala.annotation.effects.refine
 
+
+
+
+** support more of scala
+
+ - while / do-while loops
+ - pattern matching
+ - return statements
+ - by-name params: functions with by-name params should (probably) always be be effect polymorphic.
+   def f(a: => Int): Int @pc(a) = a
+ - varargs
+
+
+** TOP effect should only include @assign(any) if the method is not top-level
+
+** Case classes: synthetic methods
+
+ - companion apply should have the same effect as the constructor
+
+
+** effect cast
+
+ - need syntax for that
 
 
 ** sameParam
@@ -107,6 +143,12 @@ class C { def f: Int @noEff = 1 }
 class D extends C { override def f: Int @infer = 2 }
 
  => infers @eff, but doesn't issue an error
+
+
+** Test suite
+
+** primary constructor annotations
+ - cannot refer to arguments or `this`, not in scope
 
 
 * Tests to integrate
@@ -446,3 +488,4 @@ def f(): Int @infer = {
 
 
 
+git@github.com:soundrabbit/scala-ide.git

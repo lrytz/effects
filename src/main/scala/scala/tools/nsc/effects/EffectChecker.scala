@@ -341,6 +341,18 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
       }
     }
   }
+  
+  class SkolemizeMap(skolems: List[Symbol]) extends TypeMap {
+    val skolemOfTparam = Map(skolems.map(sk => (sk.deSkolemize, sk)): _*)
+    def apply(tp: Type): Type = tp match {
+      case TypeRef(pre, sym, args)
+      if (skolemOfTparam contains sym) =>
+        mapOver(typeRef(NoPrefix, skolemOfTparam(sym), args))
+
+      case _ =>
+        mapOver(tp)
+    }
+  }
 
   /**
    * Check a DefDef tree
@@ -354,7 +366,6 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     val sym = dd.symbol
 
     val symEff = fromAnnotation(sym.tpe).orElse(lookupExternal(sym)).getOrElse(abort("no latent effect annotation on " + sym))
-    val symTp = sym.tpe.finalResultType // @TODO: what about type parameters? def f[T](x: T): T = x
 
     if (!inferEffect(sym)) {
       // Check or infer the latent effect
@@ -377,14 +388,43 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
         // Check or infer the return type
         val rhs1 = refine(dd.rhs, ddTyper, sym, unit)
 
-        // Similar to `typeSig` in Namers. References to type parameters are given
-        // the skolemized symbol, while in sym.tpe we have the non-skolemized ones.
-        val rhsTp = sym.tpe match {
+        val rhsTp = rhs1.tpe
+        
+        /* What a trick! (or hack..?). When taking `sym.tpe.finalResultType`, it refers to the
+         * non-skolemized type params. However, the `rhs1.tpe` refers to skolemized type params.
+         * So one of the two needs to be adjusted to the other.
+         * 
+         * There's only one correct solution: put skolems into the `sym.tpe.finalResultType`,
+         * as shown by the following example:
+         * 
+         *   class K[T]
+         *   def f[A]: K[A] = {
+         *     class I extends K[A]
+         *     new I
+         *   }
+         * 
+         * For method `f` we have
+         *   sym.tpe.finalResultType = K[A]      A being the non-skolemized symbol
+         *   rhs1.tpe = I
+         * 
+         * The subtype algorithm (<:<, isSubType2 ultimately) looks at the base class
+         * of `I` which is `K[A]` *BUT* here, `A` is the skolemized symbol. Since we
+         * cannot (easily, at least) go and change the base classes (de-skolemize them),
+         * we chose to skolemize the `sym.tpe.finalResultType`.
+         * 
+         * This is also what the real type checker does. When type-checking a DefDef,
+         * the expected type (`pt` in the `typed` method) refers to skolemized symbols.
+         * 
+         * Lastly, how to find the skolem symbols? We only have `deSkolemize` on symbols,
+         * we cannot go the other way. Fortunately, the `tparams` trees of the DefDef
+         * refer to the skolems.
+         */
+        val symTp = sym.tpe match {
           case PolyType(tparams @ (tp :: _), _) if tp.owner.isTerm =>
-            new analyzer.DeSkolemizeMap(tparams) apply rhs1.tpe
+            new SkolemizeMap(dd.tparams.map(_.symbol)) apply sym.tpe.finalResultType
           case _ =>
-            rhs1.tpe
-        }
+            sym.tpe.finalResultType
+        } 
         checkRefinement(dd, rhsTp, symTp)
         rhs1
       }
@@ -460,7 +500,8 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     val (tp1a, tp2a) = (removeEffectAnnotations(tp1), removeEffectAnnotations(tp2))
     if (!annotationChecker.localInferMode(tp1a <:< tp2a)) {
       refinementError(tree, tp2a, tp1a)
-      annotationChecker.localInferMode(tp1a <:< tp2a) // @DEBUG
+      println(tp1a <:< tp2a) // @DEBUG
+      // annotationChecker.localInferMode(tp1a <:< tp2a) // @DEBUG
     }
   }
 
@@ -1167,7 +1208,9 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * to the annotated one.
    */
   def effectError(tree: Tree, expected: Elem, found: Elem) {
-    unit.error(tree.pos, "latent effect mismatch;\n found   : " + found + "\n required: " + expected)
+    val f = toAnnotation(found).mkString("@", " @", "")
+    val e = toAnnotation(expected).mkString("@", " @", "")
+    unit.error(tree.pos, "latent effect mismatch;\n found   : " + f + "\n required: " + e)
   }
 
   /**

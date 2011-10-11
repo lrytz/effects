@@ -1,31 +1,39 @@
 package effects.colls
 
+import annotation.effects._
+import pc._
+import state._
+import exceptions._
+
 trait Addable[A, +Repr <: Addable[A, Repr]] { self: Repr =>
-  def +(elem: A): Repr
+  def +(elem: A): Repr @pure
 }
 
-class AddBldr[Elem, To <: Addable[Elem, To] with Itrbl[Elem] with ItrblLk[Elem, To]](empty: To) extends Bldr[Elem, To] {
+@pure @loc() class AddBldr[Elem, To <: Addable[Elem, To] with Itrbl[Elem] with ItrblLk[Elem, To]](empty: To) extends Bldr[Elem, To] {
   protected var elems: To = empty
-  def +=(x: Elem): this.type = { elems = elems + x; this }
-  def clear() { elems = empty }
-  def result(): To = elems
+  def +=(x: Elem): this.type @pure @mod(this) = { elems = elems + x; this }
+  def clear(): Unit @pure @mod(this) = { elems = empty }
+  def result(): To @pure = elems
 }
 
 
 
 trait StLk[A, +This <: StLk[A, This] with St[A]] extends ItrblLk[A, This] with Addable[A, This] { self: This =>
-  def empty: This
-  override protected[this] def newBuilder: Bldr[A, This] = new AddBldr[A, This](empty)
-  def contains(elem: A): Boolean
-  def + (elem: A): This
-  def - (elem: A): This
-  def apply(elem: A): Boolean = contains(elem)
+  def empty: This @pure
+  override protected[this] def newBuilder: Bldr[A, This] @pure @loc() = new AddBldr[A, This](empty)
+  def contains(elem: A): Boolean @pure
+  def + (elem: A): This @pure
+  def - (elem: A): This @pure
+  def apply(elem: A): Boolean @pure = contains(elem)
 }
 
 abstract class StFct[CC[X] <: St[X] with StLk[X, CC[X]]] extends GenCpn[CC] {
-  def newBuilder[A]: Bldr[A, CC[A]] = new AddBldr[A, CC[A]](empty[A])
-  def setCanBuildFrom[A] = new CBF[CC[_], A, CC[A]] {
-    def apply(from: CC[_]) = newBuilder[A]
+  def newBuilder[A]: Bldr[A, CC[A]] @pure @loc() = new AddBldr[A, CC[A]](empty[A])
+  def setCanBuildFrom[A] = {
+	@pure @loc() class Ann extends CBF[CC[_], A, CC[A]] {
+      def apply(from: CC[_]): Bldr[A, CC[A]] @pure @loc() = newBuilder[A]
+    }
+	new Ann
   }
 }
 

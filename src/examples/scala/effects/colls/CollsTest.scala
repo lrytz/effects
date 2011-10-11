@@ -2,7 +2,7 @@ package effects.colls
 
 object CollsTest {
   def main(args: Array[String]) {
-    val l: Lst[Int] = Lst(1,2,3)
+    val l: Lst[Int] = new cns(1, new cns(2, new cns(3, nl))) // Lst(1,2,3) @TODO
     val m: Lst[Int] = l filter (x => x > 1)
     println(m)
 

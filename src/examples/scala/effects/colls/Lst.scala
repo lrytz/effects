@@ -7,7 +7,7 @@ import state._
 import exceptions._
 
 
-@loc() trait Bldr[-Elem, +To] {
+trait Bldr[-Elem, +To] {
   def +=(elem: Elem): this.type @pure @mod(this)
   def result(): To @pure
 }
@@ -85,7 +85,7 @@ abstract class GenCpn[+CC[X] <: Trav[X]] {
 }
 
 abstract class TravFct[CC[X] <: Trav[X] with GenTravTmpl[X, CC]] extends GenCpn[CC] {
-  @loc() class GCBF[A] extends CBF[CC[_], A, CC[A]] {
+  @pure @loc() class GCBF[A] extends CBF[CC[_], A, CC[A]] {
     def apply(from: Coll): Bldr[A, CC[A]] @pure @loc() = from.genericBuilder[A]
   }
 }
@@ -104,13 +104,13 @@ object Trav extends TravFct[Trav] {
 
 
 
-@loc() trait Itor[+A] {
+trait Itor[+A] {
   def hasNext: Boolean @pure
   def next(): A @pure @mod(this) @throws[NoSuchElementException]
   def isEmpty: Boolean @pure = !hasNext
   def foreach[U](f: A => U): Unit @pure @mod(this) @pc(f.apply(%)) = {
     // @TODO: analyzing effect of while.
-    if /*while*/ (hasNext) f(next()) // TODO: how can we mask the NoSuchElementException?
+    if (hasNext) f(next()) // TODO: how can we mask the NoSuchElementException?
     ()
   }
 }
@@ -144,7 +144,7 @@ trait SqLk[+A, +Repr <: SqLk[A, Repr]] extends ItrblLk[A, Repr] { self: Repr =>
   def apply(idx: Int): A @pure @throws[NoSuchElementException | UnsupportedOperationException]
 
   def iterator: Itor[A] @pure @loc() = {
-    @loc() class Ann extends Itor[A] {
+    @pure @loc() class Ann extends Itor[A] {
       var these = self // not @local!
       def hasNext: Boolean @pure = !these.isEmpty
       def next(): A @pure @throws[NoSuchElementException] /*@throws[UnsupportedOperationException]*/ @mod(this) =
@@ -180,14 +180,14 @@ object Sq extends SqFct[Sq] {
 
 
 
-@loc() sealed abstract class Lst[+A] extends Sq[A] with GenTravTmpl[A, Lst] with SqLk[A, Lst[A]] {
+@pure @loc() sealed abstract class Lst[+A] extends Sq[A] with GenTravTmpl[A, Lst] with SqLk[A, Lst[A]] {
   def apply(idx: Int): A @pure @throws[NoSuchElementException | UnsupportedOperationException] = if (idx == 0) head else tail(idx - 1)
   def length: Int @pure = if (isEmpty) 0 else 1+tail.length
   override def companion: GenCpn[Lst] @pure = Lst
 }
 
 // @TODO: overriding a "def" using a "val" => makes it pure. do we need to annotate that?
-@loc() final case class cns[A](override val head: A, override val tail: Lst[A]) extends Lst[A] {
+@pure @loc() final case class cns[A](override val head: A, override val tail: Lst[A]) extends Lst[A] {
   override def isEmpty: Boolean @pure = false
 }
 
@@ -195,7 +195,7 @@ case object nl extends Lst[Nothing] {
   override def isEmpty: Boolean @pure = true
 }
 
-@loc() class LstBldr[A] extends Bldr[A, Lst[A]] {
+@pure @loc() class LstBldr[A] extends Bldr[A, Lst[A]] {
   // @local val b = new collection.mutable.ListBuffer[A]() @TODO
   var b: Lst[A] = nl
   def +=(a: A): this.type @pure @mod(this) = {
