@@ -38,18 +38,18 @@ abstract class StFct[CC[X] <: St[X] with StLk[X, CC[X]]] extends GenCpn[CC] {
 }
 
 trait St[A] extends (A => Boolean) with Itrbl[A] with GenTravTmpl[A, St] with StLk[A, St[A]] {
-  override def companion: GenCpn[St] = St
+  override def companion: GenCpn[St] @pure = St
 }
 
 object St extends StFct[St] {
-  override def empty[A]: St[A] = new HSt[A]()
+  override def empty[A]: St[A] @pure = new HSt[A]()
   implicit def canBuildFrom[A]: CBF[Coll, A, St[A]] = setCanBuildFrom[A]
 }
 
 
 
-class HSt[A](private val els: collection.immutable.Set[A] = new collection.immutable.HashSet[A]()) extends St[A] with GenTravTmpl[A, HSt] with StLk[A, HSt[A]] { self =>
-  override def companion: GenCpn[HSt] = HSt
+@pure @loc() class HSt[A](private val els: collection.immutable.Set[A] = new collection.immutable.HashSet[A]()) extends St[A] with GenTravTmpl[A, HSt] with StLk[A, HSt[A]] { self =>
+  override def companion: GenCpn[HSt] @pure = HSt
 
   /**
    * The real collections define GenStTmpl, and provide an implementation for
@@ -64,18 +64,18 @@ class HSt[A](private val els: collection.immutable.Set[A] = new collection.immut
    * the constructor call "new AddBldr[A, This](empty)" fails, because it
    * expects a This, but gets a Set[A].
    */
-  def empty: HSt[A] = companion.empty[A]
-  def contains(elem: A): Boolean = els(elem)
-  def + (elem: A): HSt[A] = new HSt[A](self.els + elem)
-  def - (elem: A): HSt[A] = new HSt[A](self.els - elem)
+  def empty: HSt[A] @pure = companion.empty[A]
+  def contains(elem: A): Boolean @pure = els(elem)
+  def + (elem: A): HSt[A] @pure = new HSt[A](self.els + elem)
+  def - (elem: A): HSt[A] @pure = new HSt[A](self.els - elem)
   def iterator: Itor[A] = new Itor[A] {
-    val it = els.iterator
-    def hasNext: Boolean = it.hasNext
-    def next(): A = it.next()
+    @local val it = els.iterator
+    def hasNext: Boolean @pure = it.hasNext
+    def next(): A @pure @mod(this) = it.next()
   }
 }
 
 object HSt extends StFct[HSt] {
   implicit def canBuildFrom[A]: CBF[Coll, A, HSt[A]] = setCanBuildFrom[A]
-  override def empty[A]: HSt[A] = new HSt[A]()
+  override def empty[A]: HSt[A] @pure = new HSt[A]()
 }

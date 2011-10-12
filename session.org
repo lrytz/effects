@@ -1,12 +1,14 @@
 * Session
 
+import annotation.effects._
+import annotation.effects.pc._
+import annotation.effects.state._
 
+import effects.colls._
 
-class K[T]
-def f[A]: K[A] = {
-  class I extends K[A]
-  new I
-}
+val l = cns(1, cns(2, cns(3, nl)))
+
+def f: Lst[Int] @infer = l.map(x => x + 1)
 
 
 
@@ -49,6 +51,7 @@ def foo(a: A, b1: B, b2: B): B @infer = {
 
 * Bugs, Todos
 
+
 ** refine annotation is propagated
 
 def f = { val foo: C @refine = new C { def f(): Unit @pure = () } ; val x: C @refine = foo ; x }
@@ -65,9 +68,14 @@ f: (C){def f(): Unit @scala.annotation.effects.pure} @scala.annotation.effects.s
  - by-name params: functions with by-name params should (probably) always be be effect polymorphic.
    def f(a: => Int): Int @pc(a) = a
  - varargs
+ - default arguments, effects of default getters
+ - try-catch (state effects)
 
 
 ** TOP effect should only include @assign(any) if the method is not top-level
+
+or are they? it looks like
+
 
 ** Case classes: synthetic methods
 

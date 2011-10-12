@@ -1207,10 +1207,10 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * This method is called when the actual effect of a method does not conform
    * to the annotated one.
    */
-  def effectError(tree: Tree, expected: Elem, found: Elem) {
+  def effectError(tree: Tree, expected: Elem, found: Elem, msg: String = "latent effect mismatch") {
     val f = toAnnotation(found).mkString("@", " @", "")
     val e = toAnnotation(expected).mkString("@", " @", "")
-    unit.error(tree.pos, "latent effect mismatch;\n found   : " + f + "\n required: " + e)
+    unit.error(tree.pos, msg +";\n found   : " + f + "\n required: " + e)
   }
 
   /**
@@ -1218,7 +1218,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * effect than the overridden one.
    */
   def overrideError(tree: Tree, overridden: Symbol, expected: Elem, found: Elem) {
-    effectError(tree, expected, found)
+    effectError(tree, expected, found, msg = "error overriding "+ overridden.fullName +", latent effect mismatch")
   }
 
   def refinementError(tree: Tree, expected: Type, found: Type) {

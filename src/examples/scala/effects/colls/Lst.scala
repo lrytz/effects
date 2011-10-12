@@ -110,7 +110,7 @@ trait Itor[+A] {
   def isEmpty: Boolean @pure = !hasNext
   def foreach[U](f: A => U): Unit @pure @mod(this) @pc(f.apply(%)) = {
     // @TODO: analyzing effect of while.
-    if (hasNext) f(next()) // TODO: how can we mask the NoSuchElementException?
+    while (hasNext) f(next()) // TODO: how can we mask the NoSuchElementException?
     ()
   }
 }
@@ -207,6 +207,8 @@ case object nl extends Lst[Nothing] {
 }
 
 object Lst extends SqFct[Lst] {
+  implicit def canBuildFrom[A]: CBF[Coll, A, Lst[A]] @pure = new GCBF[A]
+
   // @TODO
   // def apply[A](elems: A*): Lst[A] @pure = {
     // elems.foldRight(nl: Lst[A])((a, res) => cns(a, res))
