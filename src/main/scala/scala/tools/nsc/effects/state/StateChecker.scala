@@ -266,7 +266,6 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
       
       val targsRes = seq(funRes.env, targs: _*)
 
-      // cannot use `seq` because we need the intermediate results (locations of all args)
       val argssRes = seq(targsRes.env, argss.flatten: _*)
       val flatArgLocs = argssRes.parts.map(_._3)
       
@@ -335,6 +334,18 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
    * 
    * the effect of the application `a.mod()` is transformed into `@mod(a)`.
    * 
+   * The effect is also mapped to the current environment. This is important for
+   * outer locations that a method modifies.
+   * 
+   *   def f(a: A, b: B) = {
+   *     def inner(): Unit @mod(a) = ...
+   *     a.store(b)
+   *     inner()
+   *   }
+   * 
+   * In the call to `inner`, the location of `a` is in fact `{a, b}`, the two
+   * have been merged. So the call to `inner` has effect `@mod(a, b)`.
+   * 
    * The env is applied first. This is because the target locations in the `paramsMap` are
    * already according to the current env, and therefore they don't need to be mapped over
    * `env` again.
@@ -363,7 +374,7 @@ class StateChecker(val global: Global) extends EnvEffectChecker[StateLattice] wi
      *   b    -> AnyLoc
      * 
      * For recursively found PC calls (e.g. there's "@pc(b.baz)" on bar), the
-     * parameter location ("b") won't be found in the current environemnt and
+     * parameter location ("b") won't be found in the current environment and
      * will be mapped to AnyLoc.
      */
     val paramLoc = pcInfo.param match {

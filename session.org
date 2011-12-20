@@ -1,5 +1,104 @@
 * Session
 
+
+
+
+
+
+
+
+
+
+
+object l {
+
+import annotation.effects._
+import annotation.effects.pc._
+import annotation.effects.state._
+
+
+
+@loc() class Var(init: Lst) {
+  var x = init
+}
+
+@loc() abstract class Lst {
+  def foreach(f: String => Unit): Unit @pure @pc(f.apply(%))
+
+  def map(f: String => String): Lst @pure @pc(f.apply(%)) = {
+    val res = new Var(Nl)
+    foreach(x => res.x = new Cns(f(x), res.x))
+
+
+    Function1[String, Unit] {
+      def apply(x$1: String): Unit @mod(res) @pc(f.apply)
+    }
+
+    res.x
+  }
+}
+
+object Nl extends Lst {
+  def foreach(f: String => Unit): Unit @pure = ()
+}
+@loc class Cns(hd: String, tl: Lst) extends Lst {
+  def foreach(f: String => Unit): Unit @pure @pc(f.apply(%)) = {
+    f(hd)
+    tl.foreach(f)
+  }
+}
+}
+
+
+
+
+
+
+
+
+object l {
+
+import annotation.effects._
+import annotation.effects.pc._
+import annotation.effects.state._
+
+@loc() class Var(init: Lst) {
+  var x = init
+}
+
+@loc() abstract class Lst {
+  def foreach(f: String => Unit): Unit @pure @pc(f.apply(%))
+
+  def map(f: String => String): Lst @pure @pc(f.apply(%)) = {
+    val res = new Var(Nl)
+    foreach(new Fun(res, f))
+    res.x
+  }
+}
+
+object Nl extends Lst {
+  def foreach(f: String => Unit): Unit @pure = ()
+}
+@loc class Cns(hd: String, tl: Lst) extends Lst {
+  def foreach(f: String => Unit): Unit @pure @pc(f.apply(%)) = {
+    f(hd)
+    tl.foreach(f)
+  }
+}
+
+@loc() class Fun(vr: Var, f: String => String) extends (String => Unit) {
+  def apply(s: String): Unit @mod(vr) @pc(f.apply(%)) = {
+    vr.x = (new Cns(f(s), vr.x))
+  }
+}
+
+}
+
+
+
+
+
+
 import annotation.effects._
 import annotation.effects.pc._
 import annotation.effects.state._
