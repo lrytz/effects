@@ -1,5 +1,8 @@
 /.scala_dependencies
 
+# libs
+/lib/
+
 # out directories
 /target
 /out
@@ -20,4 +23,3 @@
 /project/build/target/
 
 # other
-
