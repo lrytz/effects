@@ -19,7 +19,6 @@
 /.settings/
 
 # sbt
-/project/boot/
-/project/build/target/
+/project/target/
 
 # other
