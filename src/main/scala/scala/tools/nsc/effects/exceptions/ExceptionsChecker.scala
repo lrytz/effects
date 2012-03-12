@@ -16,11 +16,11 @@ class ExceptionsChecker(val global: Global) extends EffectChecker[ExceptionsLatt
   }
   import lattice.Elem
 
-  val throwsClass = definitions.getClass("scala.annotation.effects.exceptions.throws")
-  val scalaThrowsClass = definitions.getClass("scala.throws")
+  val throwsClass = definitions.getRequiredClass("scala.annotation.effects.exceptions.throws")
+  val scalaThrowsClass = definitions.getRequiredClass("scala.throws")
   val annotationClasses = List(throwsClass)
   
-  val barTrait = definitions.getClass("scala.annotation.effects.exceptions.$bar")
+  val barTrait = definitions.getRequiredClass("scala.annotation.effects.exceptions.$bar")
 
   
   def fromAnnotation(annots: List[AnnotationInfo]): Option[Elem] = {

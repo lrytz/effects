@@ -97,7 +97,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    * found in this list.
    */
   val annotationClasses: List[Symbol]
-  val effectTrait: Symbol = definitions.getClass("scala.annotation.effects.Effect")
+  val effectTrait: Symbol = definitions.getRequiredClass("scala.annotation.effects.Effect")
 
   /**
    * *************
@@ -127,9 +127,9 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
    */
   def toAnnotation(elem: Elem): List[AnnotationInfo]
 
-  val inferAnnotation = definitions.getClass("scala.annotation.effects.infer")
-  val refineAnnotation = definitions.getClass("scala.annotation.effects.refine")
-  val pureAnnotation = definitions.getClass("scala.annotation.effects.pure")
+  val inferAnnotation = definitions.getRequiredClass("scala.annotation.effects.infer")
+  val refineAnnotation = definitions.getRequiredClass("scala.annotation.effects.refine")
+  val pureAnnotation = definitions.getRequiredClass("scala.annotation.effects.pure")
 
   /**
    * *********
@@ -220,7 +220,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
     import definitions.FunctionClass
     funTp match {
       case TypeRef(_, sym, refArgs) if sym == FunctionClass(refArgs.length - 1) =>
-        val decls = new Scope
+        val decls = newScope()
         val res = refinedType(List(funTp), owner, decls, pos)
         val refinementOwner = res.typeSymbol
         val method = refinementOwner.newMethod(pos, nme.apply)
@@ -240,7 +240,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
         // cloning the symbol / scope, so that the returned type is not == to `funTp`
         val cloned = method.cloneSymbol
         cloned.setInfo(typeWithEffect(cloned.tpe, effect))
-        val newDecls = new Scope
+        val newDecls = newScope()
         newDecls.enter(cloned)
         copyRefinedType(refType, parents, newDecls)
 
@@ -272,7 +272,7 @@ abstract class EffectChecker[L <: CompleteLattice] extends PluginComponent with 
 
         val cloned = method.cloneSymbol
         cloned.setInfo(typeWithResult(cloned.tpe, restpe))
-        val newDecls = new Scope
+        val newDecls = newScope()
         newDecls.enter(cloned)
         copyRefinedType(refType, List(typeRef(pre, sym, newArgs)), newDecls)
 

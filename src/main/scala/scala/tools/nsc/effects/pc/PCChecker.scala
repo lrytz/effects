@@ -16,7 +16,7 @@ class PCChecker(val global: Global) extends EffectChecker[PCLattice] /* with PCC
   
   val annotationClasses = List(pcClass, anyPcClass)
 
-  val percent = definitions.getMember(definitions.getModule("scala.annotation.effects.pc"), "%".encode) 
+  val percent = definitions.getMember(definitions.getRequiredModule("scala.annotation.effects.pc"), newTermName("%").encode)
   
   def fromAnnotation(annots: List[AnnotationInfo]): Option[Elem] = 
     pcFromAnnotation(annots)

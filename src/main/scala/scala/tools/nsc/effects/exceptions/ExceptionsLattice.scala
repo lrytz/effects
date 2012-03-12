@@ -7,8 +7,8 @@ abstract class ExceptionsLattice extends CompleteLattice {
   val global: Global
   import global._
 
-  lazy val errorType = definitions.getClass("java.lang.Error").tpe
-  lazy val runtimeExceptionType = definitions.getClass("java.lang.RuntimeException").tpe
+  lazy val errorType = definitions.getRequiredClass("java.lang.Error").tpe
+  lazy val runtimeExceptionType = definitions.getRequiredClass("java.lang.RuntimeException").tpe
   lazy val throwableType = definitions.ThrowableClass.tpe
   lazy val nothingType = definitions.NothingClass.tpe
 

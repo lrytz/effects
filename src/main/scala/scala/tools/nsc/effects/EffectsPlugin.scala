@@ -37,7 +37,6 @@ class EffectsPlugin(val global: Global) extends Plugin {
     val phaseName = "pcInferencer"
   }
 
-/*
   val simpleChecker = new simple.SimpleChecker(global)
   val simpleInferencer = new {
     val checker = simpleChecker
@@ -46,6 +45,7 @@ class EffectsPlugin(val global: Global) extends Plugin {
     val phaseName = "simpleInferencer"
   }
 
+/*
   val xioChecker = new xio.XioChecker(global)
   val xioInferencer = new {
     val checker = xioChecker
@@ -63,6 +63,7 @@ class EffectsPlugin(val global: Global) extends Plugin {
   }
  */
 
+/*
   val stateChecker = new state.StateChecker(global)
   val stateInferencer = new {
     val checker = stateChecker
@@ -70,11 +71,12 @@ class EffectsPlugin(val global: Global) extends Plugin {
     val runsAfter = List("pcChecker")
     val phaseName = "stateInferencer"
   }
+*/
 
   /**
    * The compiler components that will be applied when running this plugin
    */
-  val components = List(pcInferencer, pcChecker, stateChecker, stateInferencer /*, simpleInferencer, simpleChecker, exceptionsInferencer, exceptionsChecker */ /* , xioInferencer, xioChecker */)
+  val components = List(pcInferencer, pcChecker, /* stateChecker, stateInferencer, */ simpleInferencer, simpleChecker /*, exceptionsInferencer, exceptionsChecker */ /* , xioInferencer, xioChecker */)
 }
 
 object EffectsPlugin {

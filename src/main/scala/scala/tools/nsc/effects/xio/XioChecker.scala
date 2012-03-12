@@ -17,8 +17,8 @@ class XioChecker(val global: Global) extends EffectChecker[XioLattice] {
 
   // encoding as annotations
 
-  val xioClass   = definitions.getClass("scala.annotation.effects.xio.xio")
-  val noXioClass = definitions.getClass("scala.annotation.effects.xio.noXio")
+  val xioClass   = definitions.getRequiredClass("scala.annotation.effects.xio.xio")
+  val noXioClass = definitions.getRequiredClass("scala.annotation.effects.xio.noXio")
 
   val annotationClasses = List(xioClass, noXioClass)
 

@@ -31,7 +31,7 @@ trait ExternalEffects[L <: CompleteLattice] { this: EffectChecker[L] =>
       case PolyType(_, MethodType(List(p), _)) => p
       case MethodType(List(p), _) => p
     }
-    val fun = Some(param.tpe.member("apply"))
+    val fun = Some(param.tpe.member(newTermName("apply")))
     val info = pcLattice.PCInfo(pcLattice.ParamLoc(param), fun)
     Some(pcLattice.PC(info))
   }

@@ -13,19 +13,19 @@ trait ConvertAnnots { this: StateChecker =>
                   join, joinStore, joinAssignment, joinLocality}
 
   /* Annotation Classes */
-  val modClass = definitions.getClass("scala.annotation.effects.state.mod")
-  val storeClass = definitions.getClass("scala.annotation.effects.state.store")
-  val assignClass = definitions.getClass("scala.annotation.effects.state.assign")
-  val locClass = definitions.getClass("scala.annotation.effects.state.loc")
+  val modClass = definitions.getRequiredClass("scala.annotation.effects.state.mod")
+  val storeClass = definitions.getRequiredClass("scala.annotation.effects.state.store")
+  val assignClass = definitions.getRequiredClass("scala.annotation.effects.state.assign")
+  val locClass = definitions.getRequiredClass("scala.annotation.effects.state.loc")
 
-  val localClass = definitions.getClass("scala.annotation.effects.state.local")
+  val localClass = definitions.getRequiredClass("scala.annotation.effects.state.local")
 
   val annotationClasses = List(modClass, storeClass, assignClass, locClass)
 
   
   /* Locations */
-  val anyLocObject = definitions.getModule("scala.annotation.effects.state.any")
-  val freshLocObject = definitions.getModule("scala.annotation.effects.state.fresh")
+  val anyLocObject = definitions.getRequiredModule("scala.annotation.effects.state.any")
+  val freshLocObject = definitions.getRequiredModule("scala.annotation.effects.state.fresh")
   
   
   def fromAnnotation(annots: List[AnnotationInfo]): Option[Elem] = {

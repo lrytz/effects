@@ -58,8 +58,8 @@ trait PCTools[L <: CompleteLattice] { this: EffectChecker[L] =>
    * Helper functions
    */
   
-  lazy val pcClass = definitions.getClass("scala.annotation.effects.pc.pc")
-  lazy val anyPcClass = definitions.getClass("scala.annotation.effects.pc.anyPc")
+  lazy val pcClass = definitions.getRequiredClass("scala.annotation.effects.pc.pc")
+  lazy val anyPcClass = definitions.getRequiredClass("scala.annotation.effects.pc.anyPc")
 
 
   /**
